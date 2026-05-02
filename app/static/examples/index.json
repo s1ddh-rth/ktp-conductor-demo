@@ -1,0 +1,27 @@
+[
+  {
+    "file": "ttpla_sample_01.jpg",
+    "label": "TTPLA · clear transmission line",
+    "notes": "Easy case: a high-contrast transmission line against open sky. The model should produce a clean, well-localised mask. Drop in a TTPLA validation image to populate this slot."
+  },
+  {
+    "file": "ttpla_sample_02.jpg",
+    "label": "TTPLA · cluttered scene",
+    "notes": "Hard case: cables crossing tree canopy or against textured background. Tests robustness to occlusion and contrast loss."
+  },
+  {
+    "file": "synthetic_lv_01.jpg",
+    "label": "Synthetic LV · parallel street run",
+    "notes": "Procedural urban-LV scene: a four-span feeder running parallel to a street. The shallow sag exercises the catenary geometry under near-horizontal anchors."
+  },
+  {
+    "file": "synthetic_lv_02.jpg",
+    "label": "Synthetic LV · transformer star",
+    "notes": "Four catenary cables radiating from a central transformer pole. Demonstrates the visual target the wider project would address; the model is not trained for this domain, so partial recovery is expected."
+  },
+  {
+    "file": "synthetic_lv_03.jpg",
+    "label": "Synthetic LV · long feeder with drops",
+    "notes": "A multi-span feeder with three building drops. Built to expose the gap between TTPLA's transmission-line training distribution and urban LV imagery."
+  }
+]

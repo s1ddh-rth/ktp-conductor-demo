@@ -1,0 +1,56 @@
+# systemd unit for the KTP conductor demo on the Fedora laptop.
+#
+# Install:
+#   sudo cp scripts/ktp-demo.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ktp-demo
+#
+# Logs:
+#   journalctl -u ktp-demo -f
+#
+# The unit assumes:
+#   - the repo lives at /home/__USER__/ktp-conductor-demo
+#   - dependencies are installed via `uv sync --no-dev`
+#   - the user `__USER__` exists and owns the repo
+#
+# Replace every `__USER__` token below before installing — for example:
+#     sed -i "s/__USER__/$USER/g" scripts/ktp-demo.service
+# The Restart=on-failure + RestartSec=10 combination matches the
+# brief's "restart within 10s of a forced kill" acceptance criterion.
+
+[Unit]
+Description=KTP Conductor Demo (FastAPI / uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=/home/__USER__/ktp-conductor-demo
+Environment=PATH=/home/__USER__/ktp-conductor-demo/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/__USER__/ktp-conductor-demo/.venv/bin/uvicorn app.main:app \
+    --host 0.0.0.0 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Hardening — the demo serves public traffic over a Cloudflare tunnel,
+# so tighten the unit's filesystem and capability surface.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/__USER__/ktp-conductor-demo/uploads
+ReadWritePaths=/home/__USER__/ktp-conductor-demo/weights
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

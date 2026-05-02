@@ -1,0 +1,24 @@
+# Place at ~/.cloudflared/config.yml after running:
+#   cloudflared tunnel login
+#   cloudflared tunnel create ktp-demo
+#   cloudflared tunnel route dns ktp-demo ktp.<yourdomain>.dev
+#
+# Replace UUID and paths to match your machine.
+
+tunnel: REPLACE-WITH-TUNNEL-UUID
+credentials-file: /home/REPLACE-WITH-USER/.cloudflared/REPLACE-WITH-TUNNEL-UUID.json
+
+ingress:
+  - hostname: ktp.REPLACE-WITH-YOURDOMAIN.dev
+    service: http://localhost:8000
+    originRequest:
+      connectTimeout: 30s
+      tlsTimeout: 10s
+      noTLSVerify: false
+  - service: http_status:404
+
+# After saving, install as a systemd service:
+#   sudo cloudflared service install
+#   sudo systemctl enable --now cloudflared
+# Logs:
+#   journalctl -u cloudflared -f

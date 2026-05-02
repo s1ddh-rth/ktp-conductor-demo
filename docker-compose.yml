@@ -1,0 +1,46 @@
+# Local-test compose for the KTP conductor demo.
+#
+# The Dockerfile bakes a CUDA 12.4 runtime, so a host with NVIDIA
+# drivers >= 535 and the nvidia-container-toolkit installed will
+# pick up the GPU automatically. CPU-only hosts still get a working
+# (slower) fallback because `ConductorSegmenter` falls back to CPU
+# when CUDA is unavailable.
+#
+# Usage:
+#   docker compose up --build         # foreground, with logs
+#   docker compose up -d              # background
+#   docker compose logs -f            # tail logs
+#   docker compose down               # stop and remove
+#
+# To use a weights file from the host instead of baking it into the
+# image, comment out the COPY of weights/ in the Dockerfile and
+# rely on the bind mount below.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ktp-conductor-demo:latest
+    container_name: ktp-demo
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./weights:/app/weights:ro
+      - ./app/static/examples:/app/app/static/examples:ro
+    environment:
+      - DEVICE=cuda          # falls back to cpu if CUDA is unavailable
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

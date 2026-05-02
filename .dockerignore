@@ -1,0 +1,14 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+notebooks/
+docs/screenshots/eval/
+uploads/
+# weights/ is intentionally NOT ignored: a baked-in image with weights
+# is the simplest deployment for this demo. To ship a weights-less
+# image (smaller, weights mounted at runtime), add `weights/` here and
+# bind-mount via docker-compose.
