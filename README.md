@@ -9,6 +9,30 @@ The system runs end-to-end from an aerial RGB image to GIS-ready
 vector geometry, with two further modules covering hidden-cable
 inference and LiDAR classification.
 
+## On the dataset gap, up front
+
+LV-specific labelled imagery is not openly available, so the
+segmentation model here is trained on **TTPLA** (Abdelfattah et al.,
+2020) — high-voltage transmission lines in rural settings. That is
+the wrong distribution for urban LV cables, and the prototype owns
+the consequence rather than dressing over it:
+
+- A **session-grouped evaluation split** (TTPLA filenames encode
+  flight sessions) is reported alongside the random split, exposing
+  generalisation gaps that pure random splitting would hide. See
+  `docs/evaluation.md` and `training/evaluate.py`.
+- A small **synthetic urban-LV scene generator**
+  (`scripts/synthesise_lv.py`) produces deterministic procedural
+  scenes the segmenter can be inspected on; partial recovery is
+  expected and informative, not a failure.
+- The methodology document is explicit about what would change with
+  real LV data: active labelling, self-supervised pretraining on a
+  DNO's unlabelled archive, and a learned RGB+LiDAR fusion model
+  rather than the late-fusion baseline shipped here.
+
+This framing is more useful as a research artefact than chasing a
+single headline IoU on TTPLA.
+
 ## What's in here
 
 | Module | What it does | Where |

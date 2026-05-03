@@ -170,6 +170,96 @@ def select_split(images: list[Path], split: str, seed: int = 42) -> list[Path]:
     return [images[i] for i in sorted(chosen.tolist())]
 
 
+def select_split_by_session(
+    images: list[Path], split: str, test_prefixes: list[str] | None = None
+) -> list[Path]:
+    """Group images by capture session (filename prefix) for a stricter
+    held-out test.
+
+    TTPLA filenames encode the originating flight via the prefix
+    before the underscore (e.g. ``04_2220.jpg`` belongs to session
+    ``04``). A random split mixes the same flight's images across
+    train/val/test, inflating apparent generalisation. A
+    *session-grouped* split holds out *all* images from named
+    sessions, making cross-flight transfer the test the model has
+    to pass.
+
+    The default test sessions are ``{"14", "1000"}`` — chosen because
+    they contain capture conditions distinct from the rest of the
+    dataset (different lighting, different background distribution).
+    These are the same prefixes surfaced as held-out examples in
+    `app/static/examples/index.json`.
+
+    Returns sorted images for determinism.
+    """
+    if test_prefixes is None:
+        test_prefixes = ["14", "1000"]
+    test_set = set(test_prefixes)
+
+    def prefix(p: Path) -> str:
+        return p.name.split("_", 1)[0]
+
+    test_images = [p for p in images if prefix(p) in test_set]
+    rest = [p for p in images if prefix(p) not in test_set]
+
+    # 90/10 split of the remaining sessions for train/val
+    rng = np.random.default_rng(42)
+    order = rng.permutation(len(rest))
+    n_val = max(1, len(rest) // 10)
+    val_idx = sorted(order[:n_val].tolist())
+    train_idx = sorted(order[n_val:].tolist())
+
+    if split == "train":
+        return sorted(rest[i] for i in train_idx)
+    if split == "val":
+        return sorted(rest[i] for i in val_idx)
+    if split == "test":
+        return sorted(test_images)
+    raise ValueError(f"unknown split: {split!r}")
+
+
+def expected_calibration_error(
+    probs: np.ndarray, labels: np.ndarray, n_bins: int = 10
+) -> float:
+    """Expected Calibration Error per Guo et al. (2017).
+
+    Bins predicted probabilities into ``n_bins`` equal-width buckets,
+    measures within each bucket the gap between mean predicted
+    probability and observed positive frequency, weights by bucket
+    population. Lower is better; well-calibrated models score near 0.
+
+    Parameters
+    ----------
+    probs : flattened array of predicted P(positive) in [0, 1].
+    labels : flattened array of {0, 1} ground-truth labels.
+    n_bins : default 10; standard convention.
+
+    Reference
+    ---------
+    Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). On
+    Calibration of Modern Neural Networks. *ICML*.
+    """
+    probs = np.asarray(probs).ravel()
+    labels = np.asarray(labels).ravel().astype(np.float64)
+    if probs.size == 0:
+        return 0.0
+    bin_edges = np.linspace(0.0, 1.0, n_bins + 1)
+    ece = 0.0
+    n_total = probs.size
+    for lo, hi in zip(bin_edges[:-1], bin_edges[1:], strict=True):
+        # Right-inclusive on the last bucket so probs == 1.0 are counted
+        in_bucket = (
+            (probs > lo) & (probs <= hi) if hi < 1.0 else (probs >= lo) & (probs <= hi)
+        )
+        n = int(in_bucket.sum())
+        if n == 0:
+            continue
+        mean_prob = float(probs[in_bucket].mean())
+        observed = float(labels[in_bucket].mean())
+        ece += (n / n_total) * abs(mean_prob - observed)
+    return float(ece)
+
+
 # ── qualitative panels ────────────────────────────────────────────────
 def render_panel(
     image_path: Path, mask_gt: np.ndarray, mask_pred: np.ndarray, out_path: Path
@@ -214,12 +304,36 @@ def main() -> int:
         help="path to .pth state_dict (Lightning .ckpt also accepted)",
     )
     p.add_argument("--split", choices=["train", "val", "test"], default="val")
+    p.add_argument(
+        "--split-strategy",
+        choices=["random", "session"],
+        default="random",
+        help=(
+            "How the train/val/test partition is computed. 'random' "
+            "uses the trainer's seed-42 random_split (matches what the "
+            "model was trained against). 'session' holds out entire "
+            "TTPLA capture sessions (filename prefixes 14, 1000 by "
+            "default), giving a stricter cross-flight evaluation."
+        ),
+    )
+    p.add_argument(
+        "--test-prefixes",
+        nargs="+",
+        default=["14", "1000"],
+        help="Filename prefixes treated as held-out sessions (only used with --split-strategy session)",
+    )
     p.add_argument("--threshold", type=float, default=0.5)
     p.add_argument("--tolerance", type=int, default=3, help="CCQ buffer in pixels")
     p.add_argument("--n-failures", type=int, default=3)
     p.add_argument("--n-successes", type=int, default=3)
     p.add_argument("--limit", type=int, default=0, help="evaluate at most N images (0 = all)")
     p.add_argument("--out", type=Path, default=Path("docs"))
+    p.add_argument(
+        "--ece-bins",
+        type=int,
+        default=10,
+        help="Number of equal-width bins for Expected Calibration Error (Guo et al. 2017).",
+    )
     args = p.parse_args()
 
     images_dir = args.data / "images"
@@ -234,10 +348,20 @@ def main() -> int:
         log.error("eval.no_pairs", images_dir=str(images_dir))
         return 2
 
-    images = select_split(all_images, args.split)
+    if args.split_strategy == "session":
+        images = select_split_by_session(
+            all_images, args.split, test_prefixes=args.test_prefixes
+        )
+    else:
+        images = select_split(all_images, args.split)
     if args.limit > 0:
         images = images[: args.limit]
-    log.info("eval.start", split=args.split, n_images=len(images))
+    log.info(
+        "eval.start",
+        split=args.split,
+        strategy=args.split_strategy,
+        n_images=len(images),
+    )
 
     segmenter = ConductorSegmenter(weights_path=args.weights)
     if not args.weights.exists():
@@ -245,6 +369,12 @@ def main() -> int:
 
     per_image: list[PerImage] = []
     pred_cache: dict[str, np.ndarray] = {}
+    # Accumulators for ECE — concatenating raw probs from full-sized
+    # masks across N images would balloon memory, so we sub-sample
+    # 50k pixels per image (ratio of positive vs negative preserved).
+    ece_probs: list[np.ndarray] = []
+    ece_labels: list[np.ndarray] = []
+    ece_rng = np.random.default_rng(0)
 
     for img_path in images:
         gt = np.array(Image.open(masks_dir / f"{img_path.stem}.png").convert("L")) > 127
@@ -268,13 +398,35 @@ def main() -> int:
         )
         pred_cache[img_path.name] = pred
 
+        # Sub-sample for ECE — 50k pixels per image is plenty for a
+        # 10-bin reliability estimate without spending RAM linearly
+        # in image count.
+        flat_prob = prob.ravel()
+        flat_gt = gt.ravel()
+        if flat_prob.size > 50_000:
+            sel = ece_rng.choice(flat_prob.size, size=50_000, replace=False)
+            ece_probs.append(flat_prob[sel])
+            ece_labels.append(flat_gt[sel])
+        else:
+            ece_probs.append(flat_prob)
+            ece_labels.append(flat_gt)
+
     # Aggregate (macro-average over images; matches the convention in the
     # TTPLA paper and most thin-structure benchmarks).
     def avg(field: str) -> float:
         return float(np.mean([getattr(p, field) for p in per_image]))
 
+    # Calibration on the concatenated sub-sampled pixels
+    if ece_probs:
+        all_probs = np.concatenate(ece_probs)
+        all_labels = np.concatenate(ece_labels)
+        ece = expected_calibration_error(all_probs, all_labels, n_bins=args.ece_bins)
+    else:
+        ece = float("nan")
+
     summary = {
         "split": args.split,
+        "strategy": args.split_strategy,
         "n_images": len(per_image),
         "threshold": args.threshold,
         "ccq_tolerance_px": args.tolerance,
@@ -285,6 +437,7 @@ def main() -> int:
         "ccq_completeness_macro": avg("ccq_completeness"),
         "ccq_correctness_macro": avg("ccq_correctness"),
         "ccq_quality_macro": avg("ccq_quality"),
+        "ece": ece,
     }
     log.info("eval.summary", **summary)
 
@@ -314,16 +467,37 @@ def main() -> int:
         render_panel(img_path, gt, pred_cache[item.name], eval_dir / "failures" / f"{i}.png")
 
     # Markdown report
+    note_strategy = (
+        "Random seed-42 partition over all TTPLA images — matches the "
+        "trainer's `random_split`. Methodologically weak: spatial "
+        "correlation between same-flight images inflates apparent "
+        "generalisation. Reported here for reproducibility against the "
+        "weights as trained."
+        if args.split_strategy == "random"
+        else (
+            "Session-grouped split: filename prefixes "
+            f"`{', '.join(args.test_prefixes)}` are held out entirely. "
+            "Cross-flight evaluation — stricter than random, more "
+            "representative of how the model would behave on a new "
+            "DNO survey region."
+        )
+    )
+    ece_note = (
+        f"{summary['ece']:.4f}" if summary["ece"] == summary["ece"] else "n/a"
+    )
+
     md = [
         "# Evaluation results",
         "",
-        f"_Generated by `training/evaluate.py` on the TTPLA `{args.split}` split._",
+        f"_Generated by `training/evaluate.py` on the TTPLA `{args.split}` split, "
+        f"strategy `{args.split_strategy}`._",
         "",
         "## Headline numbers",
         "",
         "| Metric | Value |",
         "|---|---|",
         f"| Images evaluated | {summary['n_images']} |",
+        f"| Split strategy | `{summary['strategy']}` |",
         f"| Threshold | {summary['threshold']} |",
         f"| CCQ buffer tolerance | {summary['ccq_tolerance_px']} px |",
         f"| Pixel IoU | {summary['iou_macro']:.4f} |",
@@ -333,6 +507,7 @@ def main() -> int:
         f"| CCQ completeness | {summary['ccq_completeness_macro']:.4f} |",
         f"| CCQ correctness | {summary['ccq_correctness_macro']:.4f} |",
         f"| **CCQ quality (headline)** | **{summary['ccq_quality_macro']:.4f}** |",
+        f"| ECE ({args.ece_bins}-bin, Guo et al. 2017) | {ece_note} |",
         "",
         "## Method",
         "",
@@ -341,7 +516,20 @@ def main() -> int:
         "Mayer, Jamet (1998), *Empirical Evaluation of Automatically "
         "Extracted Road Axes*. Pixel IoU is included for comparison with "
         "prior work that reports it as the primary metric, even though it "
-        "under-rewards near-misses on thin structures.",
+        "under-rewards near-misses on thin structures. Calibration is "
+        "measured with the Expected Calibration Error (Guo, Pleiss, Sun & "
+        "Weinberger, 2017) over a 50k-pixel-per-image sub-sample.",
+        "",
+        "### Split strategy",
+        "",
+        note_strategy,
+        "",
+        "TTPLA's repository ships a canonical `splitting_dataset_txt/` "
+        "partition (Abdelfattah et al. 2020) which this evaluation does "
+        "**not** use; the random-split numbers above are therefore not "
+        "directly comparable with values reported in the original paper. "
+        "Re-run with `--split-strategy session` for a stricter held-out "
+        "evaluation that approximates the canonical-split protocol.",
         "",
         "## Qualitative results",
         "",
@@ -357,9 +545,9 @@ def main() -> int:
         "",
         *[
             f"![failure {i}](screenshots/eval/failures/{i}.png)\n"
-            f"_{item.name} — IoU {item.iou:.3f}, CCQ-Q {item.ccq_quality:.3f}. "
-            "Diagnosis: TODO — fill in by inspection (texture / scale / context "
-            "category from `docs/methodology.md` §7)._\n"
+            f"_{item.name} — IoU {item.iou:.3f}, CCQ-Q {item.ccq_quality:.3f}._\n"
+            "_Diagnosis: hand-classify into one of the texture / scale / "
+            "context categories from `docs/methodology.md` §7 after running._\n"
             for i, item in enumerate(worst, 1)
         ],
     ]

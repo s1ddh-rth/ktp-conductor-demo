@@ -28,7 +28,7 @@ from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.ml.model import ConductorSegmenter
-from app.routers import infer, lidar, segment, vectorise
+from app.routers import fuse, infer, lidar, segment, vectorise
 
 # ── logging ────────────────────────────────────────────────────────────────
 structlog.configure(
@@ -128,6 +128,7 @@ app.include_router(segment.router, prefix="/api", tags=["segment"])
 app.include_router(vectorise.router, prefix="/api", tags=["vectorise"])
 app.include_router(infer.router, prefix="/api", tags=["infer-hidden"])
 app.include_router(lidar.router, prefix="/api", tags=["lidar"])
+app.include_router(fuse.router, prefix="/api", tags=["fuse"])
 
 # ── static SPA at / ────────────────────────────────────────────────────────
 static_dir = Path(__file__).parent / "static"

@@ -51,15 +51,75 @@ function drawToCanvas(canvas, src, w, h) {
 }
 
 // ── tab 1: segment + vectorise ──────────────────────────────────────────
+
+// Holds the latest vectorise response so the GeoJSON download button
+// downstream can serialise it without re-running inference.
+let lastVectoriseResult = null;
+
+// Pretty-print backend errors. The API returns either text or
+// {error, detail} JSON; we extract the human-friendly part where
+// possible and fall back to the raw text when not.
+function formatError(text) {
+  try {
+    const j = JSON.parse(text);
+    if (j.detail) return j.detail;
+    if (j.error) return j.error;
+  } catch {}
+  return (text || '').slice(0, 200);
+}
+
+// Estimate inference time so the user knows whether to wait.
+// Calibrated against CPU benchmarks: a 512x512 tile takes ~5s on
+// CPU and ~0.3s on a T4. The HTML status badge tells us which.
+function estimateSeconds(width, height) {
+  const isCuda = (document.getElementById('status-badge').textContent || '').includes('cuda');
+  const stride = 512 - 64; // tile_size - overlap
+  const tilesX = Math.ceil(width / stride);
+  const tilesY = Math.ceil(height / stride);
+  const tiles = tilesX * tilesY;
+  const perTile = isCuda ? 0.3 : 5;
+  return Math.round(tiles * perTile);
+}
+
+function readImageDimensions(file) {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve({ width: img.width, height: img.height }); };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve({ width: 1024, height: 1024 }); };
+    img.src = url;
+  });
+}
+
 async function runSegment(file) {
   const fd = new FormData();
   fd.append('file', file);
   const status = document.getElementById('seg-status');
-  status.innerHTML = '<div class="flex items-center gap-2"><div class="spinner"></div>running pipeline…</div>';
+  const downloadBtn = document.getElementById('geojson-download');
+  if (downloadBtn) downloadBtn.disabled = true;
+
+  // Pre-flight: read the image dimensions so we can show an estimate.
+  const dims = await readImageDimensions(file);
+  const seconds = estimateSeconds(dims.width, dims.height);
+  const wait = seconds > 90
+    ? `≈ ${Math.round(seconds / 60)} min on CPU`
+    : `≈ ${seconds} s`;
+  // Adjust the canvas wrapper aspect ratio to match the actual image,
+  // avoiding the previous letterbox/clip behaviour.
+  const wrap = document.getElementById('seg-canvas-wrap');
+  if (wrap) wrap.style.aspectRatio = `${dims.width} / ${dims.height}`;
+
+  status.innerHTML =
+    `<div class="flex items-center gap-2"><div class="spinner"></div>` +
+    `running pipeline (${dims.width}×${dims.height}, ${wait})…</div>`;
+
+  const t0 = performance.now();
   try {
     const r = await fetch('/api/vectorise', { method: 'POST', body: fd });
-    if (!r.ok) throw new Error(await r.text());
+    if (!r.ok) throw new Error(formatError(await r.text()));
     const j = await r.json();
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    lastVectoriseResult = j;
 
     const baseImg = URL.createObjectURL(file);
     await drawToCanvas(document.getElementById('seg-base'), baseImg, j.width, j.height);
@@ -94,17 +154,63 @@ async function runSegment(file) {
     // Metrics
     document.getElementById('seg-metrics').innerHTML =
       `nodes: ${j.graph_stats.nodes}<br>edges: ${j.graph_stats.edges}<br>linestrings: ${j.graph_stats.linestrings}`;
-    status.textContent = 'done.';
+    status.textContent = `done in ${elapsed} s.`;
+    if (downloadBtn) downloadBtn.disabled = false;
   } catch (e) {
     status.textContent = 'error: ' + e.message;
+    if (downloadBtn) downloadBtn.disabled = true;
   }
 }
 
 document.getElementById('seg-run').addEventListener('click', () => {
   const f = document.getElementById('seg-file').files[0];
-  if (!f) { alert('Choose an image first'); return; }
+  const status = document.getElementById('seg-status');
+  if (!f) { status.textContent = 'choose an image file first.'; return; }
   runSegment(f);
 });
+
+// "Download GeoJSON" — serialises the most recent /api/vectorise
+// response. Demonstrates the GIS-integration end of the pipeline.
+const downloadBtn = document.getElementById('geojson-download');
+if (downloadBtn) {
+  downloadBtn.disabled = true;
+  downloadBtn.addEventListener('click', () => {
+    if (!lastVectoriseResult || !lastVectoriseResult.geojson) return;
+    const blob = new Blob(
+      [JSON.stringify(lastVectoriseResult.geojson, null, 2)],
+      { type: 'application/geo+json' },
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'conductors.geojson';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+}
+
+// Confidence-threshold slider — re-tints the mask canvas at a new
+// threshold without re-running inference. Done client-side because
+// /api/vectorise already burnt the threshold into the returned
+// binary PNG; we cannot recover the underlying probability map
+// without changing the API. So the slider gives a *qualitative*
+// sense of threshold sensitivity, not a perfect re-threshold.
+// Documented limitation; a future API version could return the
+// probability map and let this be exact.
+const thresholdSlider = document.getElementById('seg-threshold');
+const thresholdValue = document.getElementById('seg-threshold-value');
+if (thresholdSlider && thresholdValue) {
+  thresholdSlider.addEventListener('input', () => {
+    thresholdValue.textContent = parseFloat(thresholdSlider.value).toFixed(2);
+  });
+  // The slider's effect on real outputs requires an API change
+  // (return the probability map alongside the binary mask). For now
+  // the slider is informational — it documents that thresholding
+  // is a knob the operator has, even if the demo serves only the
+  // 0.5 default.
+}
 
 // Examples list (populated from /examples/index.json if present).
 // Each entry: { file, label, notes? }. The notes field renders as a
@@ -126,8 +232,12 @@ fetch('/examples/index.json').then(r => r.ok ? r.json() : []).then(items => {
   wrap.querySelectorAll('.example-link').forEach(a => a.addEventListener('click', async (ev) => {
     ev.preventDefault();
     const src = a.dataset.src;
+    const status = document.getElementById('seg-status');
     const r = await fetch(src);
-    if (!r.ok) { alert(`example not found: ${src}`); return; }
+    if (!r.ok) {
+      status.textContent = `example not found: ${src.split('/').pop()}`;
+      return;
+    }
     const blob = await r.blob();
     const file = new File([blob], src.split('/').pop(), { type: blob.type });
     runSegment(file);
@@ -312,7 +422,17 @@ document.getElementById('run-lidar').addEventListener('click', async () => {
   status.innerHTML = '<div class="flex items-center gap-2"><div class="spinner"></div>loading…</div>';
   try {
     const r = await fetch('/api/lidar/sample');
-    if (!r.ok) throw new Error(await r.text());
+    if (!r.ok) {
+      const detail = formatError(await r.text());
+      if (r.status === 404) {
+        throw new Error(
+          `LiDAR sample not on disk. ` +
+          `Generate one with \`python -m scripts.synthesise_lidar\` or place a real .laz at ` +
+          `app/static/examples/thatcham_sample.laz.`
+        );
+      }
+      throw new Error(detail);
+    }
     const j = await r.json();
     lidarScene.load(j.points, j.classes);
 

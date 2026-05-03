@@ -1,18 +1,23 @@
 [
   {
     "file": "ttpla_sample_01.jpg",
-    "label": "TTPLA · clear transmission line",
-    "notes": "Easy case: a high-contrast transmission line against open sky. The model should produce a clean, well-localised mask. Drop in a TTPLA validation image to populate this slot."
+    "label": "TTPLA · 04_2220 (held-out)",
+    "notes": "TTPLA validation image (Abdelfattah et al., 2020 · Apache 2.0). Held out from training under the seed-42 random split — i.e. the model never saw this image during fitting. Use this to gauge in-domain segmentation quality."
   },
   {
     "file": "ttpla_sample_02.jpg",
-    "label": "TTPLA · cluttered scene",
-    "notes": "Hard case: cables crossing tree canopy or against textured background. Tests robustness to occlusion and contrast loss."
+    "label": "TTPLA · 07_1875 (held-out)",
+    "notes": "TTPLA validation image (seed-42 random split). A second held-out scene; useful for spotting per-image variance in the predicted mask."
+  },
+  {
+    "file": "ttpla_sample_03.jpg",
+    "label": "TTPLA · 14_00074 (cross-session held-out)",
+    "notes": "TTPLA validation image from a different capture session (prefix 14). Held out under both the seed-42 random split AND the session-grouped split — i.e. cross-flight evaluation. Lighting and background distribution differ from sessions in training, exposing genuine generalisation."
   },
   {
     "file": "synthetic_lv_01.jpg",
     "label": "Synthetic LV · parallel street run",
-    "notes": "Procedural urban-LV scene: a four-span feeder running parallel to a street. The shallow sag exercises the catenary geometry under near-horizontal anchors."
+    "notes": "Procedural urban-LV scene: a four-span feeder running parallel to a street. Out-of-domain — the model is trained on rural transmission lines, so partial recovery is expected and informative."
   },
   {
     "file": "synthetic_lv_02.jpg",

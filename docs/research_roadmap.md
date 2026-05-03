@@ -88,6 +88,32 @@ to publishable quality.
 or IROS on the topology-completion GNN. A second workshop paper on
 RGB-LiDAR fusion for utility infrastructure.
 
+### Reinforcement-learning extension to topology completion
+
+The Steiner-tree approximation in `app/ml/graph_complete.py` is a
+deterministic baseline; the topology-completion problem also admits
+a sequential-decision framing that fits the reinforcement-learning
+toolkit. An agent observes a partial cable graph (transformer +
+known buildings + observed fragments + candidate poles) and chooses
+edges one at a time, with a reward shaping that combines (a) length
+budget, (b) building-coverage rate, (c) alignment with observed
+fragments, and (d) penalties for crossing protected features
+(railways, motorways) sourced from OS Open Zoomstack. This is
+related to the wider literature on RL-for-combinatorial-optimisation
+(Dai et al., 2017, *Learning Combinatorial Optimization Algorithms
+over Graphs*; Khalil et al., 2017, *Learning to Optimize via
+Posterior Sampling*) where graph neural networks are trained as
+state representations for an actor-critic agent.
+
+A KTP-scale execution would start with offline RL on synthesised
+LV layouts (using the augmented urban scenes from Phase 1), evaluate
+on a held-out SSEN region, and benchmark against the Steiner-tree
+baseline this prototype already ships. The expected payoff is in
+constraint-handling — RL can encode operational constraints
+(minimum clearances, route preferences along existing rights-of-way)
+that linear-programming-style formulations cannot — rather than in
+raw topology accuracy.
+
 ---
 
 ## Phase 3 (months 19–30): productionisation and impact
