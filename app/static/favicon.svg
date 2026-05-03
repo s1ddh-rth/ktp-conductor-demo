@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Project signature: a catenary cable strung between two pole tops.
+       Colours match the demo's palette: navy 1f3864 for the page chrome,
+       amber f59e0b for the catenary curve as it appears on Tab 2's map. -->
+  <rect width="64" height="64" rx="12" fill="#1f3864"/>
+  <!-- Catenary curve, anchored at the two pole tops -->
+  <path d="M 12 22 Q 32 50 52 22"
+        stroke="#f59e0b" stroke-width="3.5"
+        fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Pole tops (anchor dots) -->
+  <circle cx="12" cy="22" r="3.2" fill="#ffffff"/>
+  <circle cx="52" cy="22" r="3.2" fill="#ffffff"/>
+</svg>

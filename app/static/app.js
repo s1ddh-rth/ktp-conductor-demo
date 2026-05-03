@@ -171,16 +171,23 @@ async function runSegment(file) {
   const thresholdEl = document.getElementById('seg-threshold');
   const threshold = thresholdEl ? parseFloat(thresholdEl.value) : 0.5;
 
+  // Decide whether to call the plain vectorise endpoint or the late-fusion
+  // endpoint. Fusion adds LiDAR-derived per-feature support (linearity +
+  // conductor-fraction within a buffer) and an aggregate fused_confidence.
+  const fuseEl = document.getElementById('fuse-toggle');
+  const useFuse = !!(fuseEl && fuseEl.checked);
+  const endpoint = useFuse
+    ? `/api/fuse?buffer_px=8.0`
+    : `/api/vectorise?threshold=${threshold}`;
+  const modeLabel = useFuse ? 'fusion' : `threshold ${threshold.toFixed(2)}`;
+
   status.innerHTML =
     `<div class="flex items-center gap-2"><div class="spinner"></div>` +
-    `running pipeline (${dims.width}×${dims.height}, threshold ${threshold.toFixed(2)}, ${wait})…</div>`;
+    `running pipeline (${dims.width}×${dims.height}, ${modeLabel}, ${wait})…</div>`;
 
   const t0 = performance.now();
   try {
-    const r = await fetch(
-      `/api/vectorise?threshold=${threshold}`,
-      { method: 'POST', body: fd },
-    );
+    const r = await fetch(endpoint, { method: 'POST', body: fd });
     if (!r.ok) throw new Error(formatError(await r.text()));
     const j = await r.json();
     const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
@@ -188,38 +195,76 @@ async function runSegment(file) {
 
     const baseImg = URL.createObjectURL(file);
     await drawToCanvas(document.getElementById('seg-base'), baseImg, j.width, j.height);
-    await drawToCanvas(
-      document.getElementById('seg-mask'),
-      'data:image/png;base64,' + j.mask_png_b64, j.width, j.height
-    );
 
-    // Tint the mask: replace black-and-white with cyan-on-transparent for visibility
-    const maskCanvas = document.getElementById('seg-mask');
-    const ctx = maskCanvas.getContext('2d');
-    const data = ctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
-    for (let i = 0; i < data.data.length; i += 4) {
-      const v = data.data[i];
-      data.data[i] = v ? 255 : 0;     // R
-      data.data[i+1] = v ? 90 : 0;    // G
-      data.data[i+2] = v ? 80 : 0;    // B
-      data.data[i+3] = v ? 220 : 0;   // A
+    if (j.mask_png_b64) {
+      // Vectorise endpoint returned the binary mask — draw and tint it.
+      await drawToCanvas(
+        document.getElementById('seg-mask'),
+        'data:image/png;base64,' + j.mask_png_b64, j.width, j.height
+      );
+      const maskCanvas = document.getElementById('seg-mask');
+      const ctx = maskCanvas.getContext('2d');
+      const data = ctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+      for (let i = 0; i < data.data.length; i += 4) {
+        const v = data.data[i];
+        data.data[i] = v ? 255 : 0;     // R
+        data.data[i+1] = v ? 90 : 0;    // G
+        data.data[i+2] = v ? 80 : 0;    // B
+        data.data[i+3] = v ? 220 : 0;   // A
+      }
+      ctx.putImageData(data, 0, 0);
+    } else {
+      // Fuse endpoint doesn't return a mask — clear the overlay canvas.
+      const maskCanvas = document.getElementById('seg-mask');
+      const ctx = maskCanvas.getContext('2d');
+      ctx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
     }
-    ctx.putImageData(data, 0, 0);
 
-    // GeoJSON on the map
+    // GeoJSON on the map. For fusion responses, opacity scales with
+    // each feature's fused_confidence so a reviewer can see at a glance
+    // which linestrings the LiDAR signal corroborates.
     segLayer.clearLayers();
     L.geoJSON(j.geojson, {
-      style: { color: '#ff5a50', weight: 2.5, opacity: 0.9 },
+      style: (feat) => {
+        const conf = feat?.properties?.fused_confidence;
+        return useFuse && typeof conf === 'number'
+          ? { color: '#f59e0b', weight: 3, opacity: 0.3 + 0.6 * conf }
+          : { color: '#ff5a50', weight: 2.5, opacity: 0.9 };
+      },
+      onEachFeature: (feat, layer) => {
+        const p = feat?.properties || {};
+        if (typeof p.fused_confidence === 'number') {
+          layer.bindTooltip(
+            `<div class="text-xs">` +
+            `<div>fused: <b>${p.fused_confidence.toFixed(3)}</b></div>` +
+            `<div>RGB length: ${p.rgb_length_px} px</div>` +
+            `<div>LiDAR linearity: ${p.lidar_linearity_support}</div>` +
+            `<div>LiDAR conductor frac: ${p.lidar_conductor_fraction}</div>` +
+            `<div>neighbours: ${p.n_lidar_neighbours}</div>` +
+            `</div>`,
+            { sticky: true },
+          );
+        }
+      },
     }).addTo(segLayer);
     if (j.geojson.features.length) {
       const fc = L.geoJSON(j.geojson);
       mapMain.fitBounds(fc.getBounds().pad(0.1));
     }
 
-    // Metrics
-    document.getElementById('seg-metrics').innerHTML =
-      `nodes: ${j.graph_stats.nodes}<br>edges: ${j.graph_stats.edges}<br>linestrings: ${j.graph_stats.linestrings}`;
-    status.textContent = `done in ${elapsed} s.`;
+    // Metrics — different shapes for the two endpoints, render both cleanly.
+    if (j.graph_stats) {
+      document.getElementById('seg-metrics').innerHTML =
+        `nodes: ${j.graph_stats.nodes}<br>edges: ${j.graph_stats.edges}<br>linestrings: ${j.graph_stats.linestrings}`;
+    } else if (j.summary) {
+      const s = j.summary;
+      document.getElementById('seg-metrics').innerHTML =
+        `linestrings: ${s.n_linestrings}<br>` +
+        `lidar available: ${s.lidar_available ? 'yes' : 'no'}<br>` +
+        `mean fused confidence: ${s.mean_fused_confidence.toFixed(3)}<br>` +
+        `buffer: ${s.buffer_px} px`;
+    }
+    status.textContent = `done in ${elapsed} s.` + (useFuse ? ' (fusion mode)' : '');
     if (downloadBtn) downloadBtn.disabled = false;
   } catch (e) {
     status.textContent = 'error: ' + e.message;
