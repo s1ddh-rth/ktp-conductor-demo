@@ -52,13 +52,39 @@
         digitise their low-voltage networks. Many LV cable runs were never mapped, or exist only on
         paper records — a problem at the heart of supporting EVs, heat pumps, and rooftop solar. This
         prototype demonstrates a four-stage pipeline aimed at the kind of system a Knowledge Transfer
-        Partnership (KTP) between a university and a DNO would build out: detecting conductors in
-        aerial imagery, converting them to GIS-ready vector geometry, inferring the location of
-        hidden or occluded cables, and classifying conductors in airborne LiDAR.
+        Partnership (KTP) between a university and a DNO would build out.
       </p>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 my-4 text-sm text-slate-700">
+        <div class="border border-slate-200 rounded p-3">
+          <div class="font-semibold text-slate-900 mb-1">Tab 1 · Segment &amp; Vectorise</div>
+          A trained <strong>U-Net (ResNet-34 encoder)</strong> turns an aerial RGB image into a binary
+          cable mask, a skeleton walker turns the mask into a graph, and the graph is simplified to
+          GIS-ready GeoJSON LineStrings. Single learned component in the prototype.
+        </div>
+        <div class="border border-slate-200 rounded p-3">
+          <div class="font-semibold text-slate-900 mb-1">Tab 2 · Infer Hidden Cables</div>
+          Two deterministic baselines for cables not directly visible: a closed-form
+          <strong>catenary fit</strong> for occluded spans, and a <strong>Steiner-tree approximation</strong>
+          for predicting the cable network connecting buildings to a transformer. Performance floor a
+          learned successor (GraphSAGE / GAT) would beat in the full project.
+        </div>
+        <div class="border border-slate-200 rounded p-3">
+          <div class="font-semibold text-slate-900 mb-1">Tab 3 · LiDAR Classification</div>
+          Per-point eigenvalue features (Demantké et al., 2011) classify points into ground / vegetation
+          / conductor / structure. Hand-crafted features as a published baseline; PointNet++ named as
+          Phase 2 in the roadmap.
+        </div>
+        <div class="border border-slate-200 rounded p-3">
+          <div class="font-semibold text-slate-900 mb-1">RGB + LiDAR Fusion (<code>/api/fuse</code>)</div>
+          A late-fusion endpoint re-scores each predicted LineString with LiDAR-derived linearity and
+          conductor-fraction support. Decision-level baseline; mid-fusion (BEVFusion / TransFusion)
+          named as Phase 2.
+        </div>
+      </div>
       <p class="text-sm text-slate-500">
-        Trained on TTPLA (transmission-line aerial imagery) as a proxy for unavailable LV-specific data.
-        See the methodology document for the discussion of what changes for LV.
+        Trained on the TTPLA dataset (transmission-line aerial imagery) as a proxy for unavailable
+        LV-specific data — the methodology doc is explicit about the domain gap and what would change
+        for real LV imagery.
       </p>
     </div>
   </section>
@@ -76,6 +102,31 @@
 
     <!-- TAB 1: SEGMENT -->
     <section id="tab-segment" class="tab-panel">
+      <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 text-sm text-slate-700">
+        <strong class="text-slate-900">What this tab demonstrates.</strong>
+        The full RGB → vector pipeline. Drop in an aerial photo (or pick an example) and the server
+        runs four stages:
+        <ol class="mt-2 space-y-1 list-decimal list-inside text-slate-600">
+          <li><strong>Segment.</strong> A U-Net with a ResNet-34 encoder, fine-tuned on TTPLA, runs
+            sliding-window inference at 512 × 512 with Hann-windowed stitching for arbitrary input
+            sizes. Output: a per-pixel "cable / not-cable" probability map.</li>
+          <li><strong>Threshold &amp; clean.</strong> Binarise the probabilities (default τ = 0.5; the
+            slider exposes this), then morphological-open to drop sub-cable noise. Output: the red
+            mask overlay you'll see on the canvas.</li>
+          <li><strong>Skeleton → graph.</strong> Reduce the mask to a 1-pixel-wide medial axis,
+            walk it to find junctions and endpoints, and simplify each chain with Douglas-Peucker.
+            Output: a NetworkX graph with simplified Shapely LineStrings.</li>
+          <li><strong>GeoJSON.</strong> Project pixel coordinates onto a synthetic lat/lon box near
+            Thatcham (purely a visualisation choice — the imagery isn't georeferenced) and emit a
+            FeatureCollection. Output: the lines you see on the Leaflet map and that the
+            <em>Download GeoJSON</em> button serialises.</li>
+        </ol>
+        <p class="mt-2 text-xs text-slate-500">
+          Adjust the <em>confidence threshold</em> slider after a successful run — the pipeline
+          re-runs at the new threshold without re-uploading the image. For synthetic-LV examples,
+          tick <em>Show ground truth</em> to overlay the procedurally-generated mask in green.
+        </p>
+      </div>
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-1 space-y-4">
           <div class="bg-white rounded-lg border border-slate-200 p-5">
@@ -98,6 +149,11 @@
           </div>
           <div class="bg-white rounded-lg border border-slate-200 p-5">
             <h3 class="font-semibold text-slate-900 mb-2">Examples</h3>
+            <p class="text-xs text-slate-500 mb-2">
+              Click any example to feed it through the segmenter. TTPLA images
+              test in-domain accuracy; synthetic-LV scenes test the (deliberate)
+              domain gap. <em>Different from Tab 2's pre-defined geometry demos.</em>
+            </p>
             <div id="seg-examples" class="space-y-2 text-sm"></div>
           </div>
           <div class="bg-white rounded-lg border border-slate-200 p-5">
@@ -115,18 +171,34 @@
         </div>
         <div class="lg:col-span-2 space-y-4">
           <div class="bg-white rounded-lg border border-slate-200 p-5">
-            <h3 class="font-semibold text-slate-900 mb-2">Segmentation overlay</h3>
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="font-semibold text-slate-900">Segmentation overlay</h3>
+              <label id="gt-toggle-wrap" class="hidden items-center gap-2 text-sm text-slate-600">
+                <input id="gt-toggle" type="checkbox" class="accent-emerald-600" />
+                Show ground truth
+              </label>
+            </div>
             <div id="seg-canvas-wrap" class="canvas-stack bg-slate-100 rounded" style="aspect-ratio: 16/9;">
               <canvas id="seg-base"></canvas>
               <canvas id="seg-mask" style="opacity: 0.6; mix-blend-mode: screen;"></canvas>
+              <canvas id="seg-gt" style="opacity: 0; mix-blend-mode: screen;"></canvas>
             </div>
+            <p class="text-xs text-slate-400 mt-1">
+              Red overlay = model prediction. When a synthetic-LV example is loaded, the
+              <em>Show ground truth</em> toggle adds a green overlay of the procedurally-generated
+              mask — useful for seeing the gap between what the TTPLA-trained model finds and what's
+              actually drawn in the scene.
+            </p>
           </div>
           <div class="bg-white rounded-lg border border-slate-200 p-5">
             <h3 class="font-semibold text-slate-900 mb-2">Vectorised output (Leaflet)</h3>
             <div id="map"></div>
             <p class="text-xs text-slate-500 mt-2">
-              Pixel coordinates are mapped onto a synthetic latitude/longitude box near Thatcham
-              for visualisation only — the TTPLA images themselves are not georeferenced.
+              <strong>Map context.</strong> Predicted cable geometry is plotted onto a synthetic
+              latitude/longitude box centred near Thatcham (SSEN's operational base). This is a
+              visualisation choice — TTPLA images are not georeferenced and the uploaded image is
+              not located here in reality. The lines indicate <em>shape and topology</em>, not
+              real-world position.
             </p>
           </div>
         </div>
@@ -135,23 +207,40 @@
 
     <!-- TAB 2: HIDDEN -->
     <section id="tab-hidden" class="tab-panel hidden">
+      <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 text-sm text-slate-700">
+        <strong class="text-slate-900">What this tab demonstrates.</strong>
+        Two techniques for inferring cables that aren't directly visible in imagery —
+        run on canonical pre-defined geometry, <em>not</em> on the synthetic LV examples
+        from Tab 1. Pick a scenario below and click <em>Run inference</em>.
+        <ul class="mt-2 space-y-1 list-disc list-inside text-slate-600">
+          <li><strong>Hidden span:</strong> two known pole tops with the cable
+            between them occluded → fit a physical catenary curve.</li>
+          <li><strong>Network completion (no evidence):</strong> a transformer plus
+            building footprints → predict the minimum-cost cable network that
+            connects them all (Steiner-tree approximation).</li>
+          <li><strong>Network completion (partial evidence):</strong> same scene
+            with some cables already visible — the predicted tree is biased to
+            align with those fragments.</li>
+        </ul>
+      </div>
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-1 space-y-4">
           <div class="bg-white rounded-lg border border-slate-200 p-5">
             <h3 class="font-semibold text-slate-900 mb-2">Scenario</h3>
             <select id="scenario-select" class="w-full border border-slate-300 rounded px-3 py-2 text-sm">
-              <option value="catenary_simple">Catenary fit between two visible poles</option>
-              <option value="topology_small">LV topology — 6 buildings, 1 transformer</option>
-              <option value="topology_partial">LV topology — partial cable evidence</option>
+              <option value="catenary_simple">Hidden span · two visible poles, occluded cable</option>
+              <option value="topology_small">Network completion · no observed cables</option>
+              <option value="topology_partial">Network completion · with partial evidence</option>
             </select>
             <button id="run-hidden" class="mt-3 w-full bg-[#1f3864] hover:bg-[#152647] text-white font-medium py-2 rounded">Run inference</button>
           </div>
           <div class="bg-white rounded-lg border border-slate-200 p-5">
             <h3 class="font-semibold text-slate-900 mb-2">Method</h3>
             <p class="text-sm text-slate-600 leading-relaxed" id="hidden-method-note">
-              Choose a scenario and click run. Catenary mode fits a physical curve between two anchors.
-              Topology mode uses a Steiner-tree approximation over building, pole, and transformer locations,
-              optionally biased by observed cable fragments from the segmenter.
+              <strong>Hidden span (catenary):</strong> two black dots are the visible pole tops 60 m apart.
+              The cable between them is occluded. We fit a physical catenary curve (gravity-driven sag)
+              constrained only by the two anchors; the thin band shows sag uncertainty. With short spans
+              the curve looks nearly straight — that is physically correct, not a bug.
             </p>
           </div>
           <div class="bg-white rounded-lg border border-slate-200 p-5">
@@ -176,6 +265,25 @@
 
     <!-- TAB 3: LIDAR -->
     <section id="tab-lidar" class="tab-panel hidden">
+      <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 text-sm text-slate-700">
+        <strong class="text-slate-900">What this tab demonstrates.</strong>
+        Per-point LiDAR classification using eigenvalue features (Demantké et al., 2011) — a published
+        classical baseline, no deep learning. The local k-NN covariance matrix tells us whether a
+        point's neighbourhood is shaped like a line (cable / pole), a plane (ground / roof), or a blob
+        (vegetation). Combined with height-above-ground, four classes drop out cleanly.
+        <ul class="mt-2 space-y-1 list-disc list-inside text-slate-600">
+          <li><strong>What you should see:</strong> a flat slate-grey ground plane, two green vegetation
+            blobs off to the sides, three vertical red poles down the middle, and a thin amber band of
+            cable points strung between them at ~9 m height.</li>
+          <li><strong>How to look:</strong> click <em>Load &amp; classify</em>, then drag in the canvas
+            to orbit. The cable band is easiest to spot from a slight side-angle — straight overhead it
+            disappears into the structure points.</li>
+          <li><strong>Why this is here:</strong> the JD asks for "RGB and LiDAR analysis with feature
+            extraction and fusion". This baseline classifier feeds the <code>/api/fuse</code> endpoint
+            on Tab 1; PointNet++ / MinkowskiNet are named as the Phase-2 learned successors in the
+            roadmap.</li>
+        </ul>
+      </div>
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-1 space-y-4">
           <div class="bg-white rounded-lg border border-slate-200 p-5">
@@ -201,7 +309,17 @@
         <div class="lg:col-span-2">
           <div class="bg-white rounded-lg border border-slate-200 p-5">
             <h3 class="font-semibold text-slate-900 mb-2">3D viewer</h3>
-            <div id="lidar-canvas"></div>
+            <div id="lidar-canvas-wrap" class="relative">
+              <div id="lidar-canvas"></div>
+              <!-- In-canvas legend — stays visible while orbiting -->
+              <div class="absolute top-3 left-3 bg-slate-900/80 text-white text-xs rounded px-3 py-2 backdrop-blur-sm pointer-events-none space-y-1">
+                <div class="font-semibold mb-1 text-slate-100">Legend</div>
+                <div><span class="inline-block w-3 h-3 rounded-sm mr-2 align-middle" style="background:#94a3b8"></span>ground</div>
+                <div><span class="inline-block w-3 h-3 rounded-sm mr-2 align-middle" style="background:#22c55e"></span>vegetation</div>
+                <div><span class="inline-block w-3 h-3 rounded-sm mr-2 align-middle" style="background:#f59e0b"></span>conductor</div>
+                <div><span class="inline-block w-3 h-3 rounded-sm mr-2 align-middle" style="background:#ef4444"></span>structure</div>
+              </div>
+            </div>
             <p class="text-xs text-slate-500 mt-2">Drag to orbit · scroll to zoom · right-drag to pan</p>
           </div>
         </div>

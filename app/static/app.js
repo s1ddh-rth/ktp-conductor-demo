@@ -91,7 +91,64 @@ function readImageDimensions(file) {
   });
 }
 
+// Cache the last uploaded file so the threshold slider can re-run inference
+// against it without forcing the user to re-upload.
+let lastUploadedFile = null;
+
+// Synthetic-LV examples ship with a paired ground-truth mask. When the
+// user clicks one, we load the mask into the dedicated GT canvas in
+// green and reveal the toggle. For uploads / TTPLA examples the
+// toggle stays hidden because no GT mask is available.
+async function loadGroundTruthMaskFor(filename) {
+  const wrap = document.getElementById('gt-toggle-wrap');
+  const gtCanvas = document.getElementById('seg-gt');
+  const gtToggle = document.getElementById('gt-toggle');
+  if (!wrap || !gtCanvas || !gtToggle) return;
+
+  // Reset state on every example click.
+  wrap.classList.add('hidden');
+  wrap.classList.remove('flex');
+  gtToggle.checked = false;
+  gtCanvas.style.opacity = 0;
+
+  const stem = filename.replace(/\.(jpe?g|png)$/i, '');
+  const maskUrl = `/examples/${stem}_mask.png`;
+  const r = await fetch(maskUrl);
+  if (!r.ok) return; // no GT mask for this example — leave toggle hidden
+
+  // Render the mask: white pixels → translucent emerald, black → transparent.
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = reject;
+    img.src = url;
+  });
+  gtCanvas.width = img.width;
+  gtCanvas.height = img.height;
+  const ctx = gtCanvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, gtCanvas.width, gtCanvas.height);
+  for (let i = 0; i < data.data.length; i += 4) {
+    const v = data.data[i];
+    data.data[i]     = v ? 16  : 0; // R
+    data.data[i + 1] = v ? 185 : 0; // G — emerald-500
+    data.data[i + 2] = v ? 129 : 0; // B
+    data.data[i + 3] = v ? 200 : 0; // A
+  }
+  ctx.putImageData(data, 0, 0);
+  URL.revokeObjectURL(url);
+
+  // Reveal the toggle now that a GT mask is loaded.
+  wrap.classList.remove('hidden');
+  wrap.classList.add('flex');
+}
+
 async function runSegment(file) {
+  // Remember the file so the threshold slider can re-run on it later.
+  if (file) lastUploadedFile = file;
+
   const fd = new FormData();
   fd.append('file', file);
   const status = document.getElementById('seg-status');
@@ -109,13 +166,21 @@ async function runSegment(file) {
   const wrap = document.getElementById('seg-canvas-wrap');
   if (wrap) wrap.style.aspectRatio = `${dims.width} / ${dims.height}`;
 
+  // Pull the current threshold value off the slider so this run uses
+  // the user's chosen threshold, not the server default.
+  const thresholdEl = document.getElementById('seg-threshold');
+  const threshold = thresholdEl ? parseFloat(thresholdEl.value) : 0.5;
+
   status.innerHTML =
     `<div class="flex items-center gap-2"><div class="spinner"></div>` +
-    `running pipeline (${dims.width}×${dims.height}, ${wait})…</div>`;
+    `running pipeline (${dims.width}×${dims.height}, threshold ${threshold.toFixed(2)}, ${wait})…</div>`;
 
   const t0 = performance.now();
   try {
-    const r = await fetch('/api/vectorise', { method: 'POST', body: fd });
+    const r = await fetch(
+      `/api/vectorise?threshold=${threshold}`,
+      { method: 'POST', body: fd },
+    );
     if (!r.ok) throw new Error(formatError(await r.text()));
     const j = await r.json();
     const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
@@ -191,25 +256,35 @@ if (downloadBtn) {
   });
 }
 
-// Confidence-threshold slider — re-tints the mask canvas at a new
-// threshold without re-running inference. Done client-side because
-// /api/vectorise already burnt the threshold into the returned
-// binary PNG; we cannot recover the underlying probability map
-// without changing the API. So the slider gives a *qualitative*
-// sense of threshold sensitivity, not a perfect re-threshold.
-// Documented limitation; a future API version could return the
-// probability map and let this be exact.
+// Ground-truth toggle behaviour: simply flips the GT canvas opacity
+// between 0 and 0.6. The mask itself was rendered when the example
+// was loaded, so toggling is instantaneous.
+const gtToggle = document.getElementById('gt-toggle');
+const gtCanvasEl = document.getElementById('seg-gt');
+if (gtToggle && gtCanvasEl) {
+  gtToggle.addEventListener('change', () => {
+    gtCanvasEl.style.opacity = gtToggle.checked ? 0.6 : 0;
+  });
+}
+
+// Confidence-threshold slider. The slider value is sent to the
+// server on every /api/vectorise call (see runSegment above) so the
+// chosen threshold genuinely drives the post-processing — re-running
+// the slider after a successful run repeats inference at the new
+// threshold without re-uploading the image.
 const thresholdSlider = document.getElementById('seg-threshold');
 const thresholdValue = document.getElementById('seg-threshold-value');
 if (thresholdSlider && thresholdValue) {
   thresholdSlider.addEventListener('input', () => {
     thresholdValue.textContent = parseFloat(thresholdSlider.value).toFixed(2);
   });
-  // The slider's effect on real outputs requires an API change
-  // (return the probability map alongside the binary mask). For now
-  // the slider is informational — it documents that thresholding
-  // is a knob the operator has, even if the demo serves only the
-  // 0.5 default.
+  // On `change` (i.e. the user releases the slider), re-run the
+  // pipeline on the cached upload at the new threshold. We don't
+  // re-run on every `input` event because that would fire on each
+  // pixel of slider movement — too expensive on CPU inference.
+  thresholdSlider.addEventListener('change', () => {
+    if (lastUploadedFile) runSegment(lastUploadedFile);
+  });
 }
 
 // Examples list (populated from /examples/index.json if present).
@@ -239,7 +314,13 @@ fetch('/examples/index.json').then(r => r.ok ? r.json() : []).then(items => {
       return;
     }
     const blob = await r.blob();
-    const file = new File([blob], src.split('/').pop(), { type: blob.type });
+    const filename = src.split('/').pop();
+    const file = new File([blob], filename, { type: blob.type });
+    // Synthetic-LV examples ship with a paired ground-truth mask
+    // (e.g. synthetic_lv_02.jpg → synthetic_lv_02_mask.png). When
+    // available, load it onto the dedicated GT canvas so the user
+    // can toggle it on top of the model's prediction.
+    await loadGroundTruthMaskFor(filename);
     runSegment(file);
   }));
 }).catch(() => {});
@@ -249,14 +330,21 @@ const SCENARIOS = {
   catenary_simple: {
     type: 'catenary',
     p1_m: [-30, 0], p2_m: [30, 0],   // metres, relative to scene centre
-    description: 'Two visible pole tops 60 m apart; the conductor between them is occluded. We fit a catenary curve constrained only by the anchors. Confidence band reflects sag uncertainty.',
+    description:
+      'Hidden span: two black dots are visible pole tops 60 m apart. The cable between them is occluded. ' +
+      'We fit a physical catenary curve (gravity-driven sag) constrained only by the two anchors; ' +
+      'the thin band brackets reasonable sag values. With short spans the curve looks nearly straight — ' +
+      'that is physically correct, not a bug.',
   },
   topology_small: {
     type: 'topology',
     transformer_m: [0, 0],
     buildings_m: [[-40, 20], [-25, 30], [10, 40], [35, 25], [40, -15], [20, -35]],
     fragments_m: [],
-    description: '6 buildings around a transformer, no observed cable evidence. The Steiner-tree approximation finds the minimum-cost connection.',
+    description:
+      'Network completion: the red dot is a transformer, dark dots are 6 building locations. ' +
+      'No cables are directly observed. A Steiner-tree approximation predicts the minimum-cost cable ' +
+      'network connecting all buildings to the transformer. Dashed amber lines = predicted edges.',
   },
   topology_partial: {
     type: 'topology',
@@ -266,7 +354,10 @@ const SCENARIOS = {
       [[-5, 5], [-25, 28]],   // partial visible spur
       [[5, 8], [30, 22]],
     ],
-    description: 'Same scene, with two partial cable fragments observed. The cost function rewards alignment with observed evidence; the tree should pull toward the fragments.',
+    description:
+      'Network completion with partial evidence: same scene as before, but two solid green lines = ' +
+      '"we can see these cable fragments in the imagery". The cost function rewards alignment with ' +
+      'observed evidence; the predicted tree (dashed amber) should visibly pull toward the green lines.',
   },
 };
 

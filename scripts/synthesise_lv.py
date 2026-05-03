@@ -87,8 +87,11 @@ def _random_aerial_background(rng: np.random.Generator, size: int) -> Image.Imag
         )
         base += layer / scale
     base = (base - base.min()) / (np.ptp(base) + 1e-6)
-    ground = (90 + 50 * base).astype(np.uint8)
-    rgb = np.stack([ground, ground - 8, ground - 18], axis=-1).clip(40, 200).astype(np.uint8)
+    # Brighter ground so the dark cables sit on a higher-contrast
+    # background than they did in v1 — bumps cables into the
+    # detector's response range without losing the aerial-photo feel.
+    ground = (115 + 55 * base).astype(np.uint8)
+    rgb = np.stack([ground, ground - 8, ground - 18], axis=-1).clip(60, 220).astype(np.uint8)
     img = Image.fromarray(rgb)
 
     draw = ImageDraw.Draw(img)
@@ -142,11 +145,14 @@ def _draw_cable(
     aerial imagery (~30 mm cable at 5 cm GSD ≈ 1 px).
     """
     curve = fit_catenary_2d(p1, p2, sag_fraction=sag_fraction, n_points=80)
-    # Cable colour: dark grey with slight chromatic jitter
+    # Cable colour: very dark grey with slight chromatic jitter.
+    # Tightened range (10–25) for higher contrast against the brighter
+    # ground — the v1 (20–45) range was below the TTPLA-trained
+    # detector's edge-response threshold.
     rgb = (
-        int(rng.integers(20, 45)),
-        int(rng.integers(20, 45)),
-        int(rng.integers(20, 45)),
+        int(rng.integers(10, 25)),
+        int(rng.integers(10, 25)),
+        int(rng.integers(10, 25)),
     )
 
     # Super-sampled image draw
@@ -155,7 +161,9 @@ def _draw_cable(
     super_img = Image.new("RGBA", (w * scale, h * scale), (0, 0, 0, 0))
     sd = ImageDraw.Draw(super_img)
     pts_super = [(x * scale, y * scale) for x, y in curve]
-    sd.line(pts_super, fill=(*rgb, 230), width=int(1.2 * scale), joint="curve")
+    # Effective output stroke width ≈ 2.5 px after the 4× downsample,
+    # matching TTPLA's typical cable-on-imagery width of 2-4 px.
+    sd.line(pts_super, fill=(*rgb, 240), width=int(2.5 * scale), joint="curve")
     super_img = super_img.resize((w, h), Image.LANCZOS)
     base.alpha_composite(super_img)
 
