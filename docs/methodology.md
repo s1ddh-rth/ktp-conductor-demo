@@ -227,11 +227,13 @@ JSON contract.
 
 ## 7. Where this fails
 
-A working model is uninteresting without an honest account of when it
-breaks. The evaluation script (`training/evaluate.py`) writes
-`docs/evaluation_results.md` with three concrete failure cases drawn
-from the held-out split; the framework below classifies them by
-mechanism, which is more useful than a flat list.
+A working model is uninteresting without an honest account of when
+it breaks. The evaluation script (`training/evaluate.py`) writes
+[`evaluation_results.md`](evaluation_results.md) and
+[`evaluation_results_session.md`](evaluation_results_session.md) with
+six concrete failure cases drawn from the held-out splits; the three
+mechanisms below describe the categories the empirical failures fell
+into. **All six observed failures fit one or more of these patterns.**
 
 ### 7.1 Texture confusion
 
@@ -277,10 +279,43 @@ the missing centerline using a physical (catenary) or topological
 (graph) prior. The ML half does what it can; the geometric half
 finishes the job.
 
-The evaluation script's `docs/screenshots/eval/failures/` gallery
-contains one example of each, with a sentence-level diagnosis. The
-selection prioritises *informative* failures over the most
-embarrassing ones.
+### Empirical failure pattern
+
+The six failures captured by `training/evaluate.py` (three from the
+random split, three from the session-grouped split — see the
+evaluation result documents) distribute across the three mechanisms
+above as follows:
+
+- **Scale failure** dominates the random-split failures. The
+  random-split evaluation runs at full 4K resolution where TTPLA
+  cables are ~3–5 px wide; the model trained on resized 512 × 512
+  crops where the same cables are 1–2 px wide, so its first-stage
+  filters have a different scale prior than the production inference
+  path needs. This is the **inference-path drift** flagged in §6
+  and made empirically visible by the gap between training-time IoU
+  (0.611) and production-path IoU (0.139).
+
+- **Vegetation occlusion** (a sub-case of context failure) dominates
+  the session-grouped failures. Multiple `14_*` images are dense
+  pine canopy with cables visible only between branches — the
+  receptive field at 512 × 512 cannot stitch the visible fragments
+  back into a coherent prediction.
+
+- **Texture confusion** appears where cables run parallel to road
+  markings or roof eaves of similar contrast and orientation. The
+  threshold step then suppresses the entire ambiguous neighbourhood
+  rather than committing to either side.
+
+The single recurring theme: **the model fails by producing nothing,
+not by producing noise**. Precision stays high (0.57 on the random
+split, 0.87 on the session split) while recall collapses (0.15 / 0.32
+respectively). For an operational deployment this is a desirable
+failure mode — under-prediction is recoverable by lowering the
+threshold or by combining with other evidence (e.g. via the
+late-fusion endpoint), whereas over-prediction would require manual
+suppression. The catenary fit and Steiner-tree topology completion
+modules in `app/ml/` are designed precisely to recover information
+from this kind of partial evidence.
 
 ## 8. Computational analysis
 
