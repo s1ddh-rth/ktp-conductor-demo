@@ -1,5 +1,11 @@
 # LV Conductor Mapping — Prototype
 
+RGB conductor segmentation is the core contribution. The hidden-cable,
+LiDAR, and fusion modules are deterministic baselines that establish
+performance floors and demonstrate the multi-modal pipeline a
+production system requires; their learned successors are named in the
+30-month research roadmap.
+
 An end-to-end research prototype for mapping low-voltage (LV)
 conductor networks from aerial imagery, motivated by the data-
 digitisation challenges UK Distribution Network Operators face on
