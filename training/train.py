@@ -12,11 +12,23 @@ which works but trains ~5× more slowly.
 
 CLI flags
 ---------
---data        path to TTPLA root (must contain images/ and masks/)
---limit N     train on the first N image/mask pairs (default 0 = all);
+--data        path to TTPLA root.
+              Layout is auto-detected:
+                <data>/images/ + <data>/masks/   (preferred, back-compat)
+                <data>/*.jpg   + <data>/masks/   (TTPLA's actual flat layout)
+              Override either with --images-dir / --masks-dir.
+--split-mode  'canonical' (default) uses TTPLA's official three-way
+              partition from <data>/splitting_dataset_txt/
+              (train.txt: 905, val.txt: 109, test.txt: 220 = 1234 images).
+              'random' reproduces v1's seed-42 random_split over all
+              images (preserved for re-running v1 only).
+--limit N     trim training subset to first N pairs (default 0 = all);
               useful for smoke-testing the pipeline before a full run.
+              In canonical mode this trims the training split only —
+              val and test integrity are preserved.
 --resume PATH continue training from a Lightning checkpoint (.ckpt)
               instead of starting fresh; loads optimiser state too.
+              Useful when a Colab session disconnects mid-training.
 """
 from __future__ import annotations
 
@@ -34,57 +46,53 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchmetrics import JaccardIndex
 
-# Image extensions the dataset will pick up. TTPLA releases vary in
-# whether they ship .jpg or .JPG; we match all common variants.
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
+from training.canonical import discover_images, load_canonical_splits
 
 
 # ── dataset ─────────────────────────────────────────────────────────────
 class TTPLADataset(Dataset):
     """Pairs of (image, binary cable mask) at fixed crop size.
 
-    Expects a directory layout:
-        root/
-          images/  *.jpg|*.jpeg|*.png  (case-insensitive)
-          masks/   *.png   (same basename; binary, 0=bg, 255=cable)
+    Decoupled from directory discovery: callers pass an explicit list
+    of image paths so that canonical-split logic can construct the
+    train / val / test buckets up front and hand each one a fresh
+    dataset with its own transform pipeline.
 
-    Images without a matching mask are skipped at construction time
-    (with a warning). This guards against partially-labelled releases
-    where some annotation JSONs failed to convert.
+    Images without a matching mask (under ``masks_dir``) are skipped at
+    construction time with a warning. This guards against partially-
+    labelled releases where some annotation JSONs failed to convert.
     """
 
-    def __init__(self, root: Path, transform: A.Compose, limit: int = 0):
-        all_images = sorted(
-            p for p in (root / "images").iterdir()
-            if p.is_file() and p.suffix in IMAGE_EXTS
-        )
-        if not all_images:
-            raise FileNotFoundError(f"no images in {root/'images'}")
+    def __init__(
+        self,
+        images: list[Path],
+        masks_dir: Path,
+        transform: A.Compose,
+    ):
+        if not images:
+            raise FileNotFoundError("TTPLADataset received an empty image list")
 
-        masks_dir = root / "masks"
         kept: list[Path] = []
         n_missing = 0
-        for img_path in all_images:
+        for img_path in images:
             if (masks_dir / f"{img_path.stem}.png").exists():
                 kept.append(img_path)
             else:
                 n_missing += 1
         if n_missing:
             warnings.warn(
-                f"{n_missing}/{len(all_images)} images have no matching mask "
+                f"{n_missing}/{len(images)} images have no matching mask "
                 f"under {masks_dir}; they will be skipped. Run "
                 f"scripts/ttpla_to_masks.py first if this is unexpected.",
                 stacklevel=2,
             )
-        if limit > 0:
-            kept = kept[:limit]
         if not kept:
             raise FileNotFoundError(
-                f"no (image, mask) pairs found under {root}; "
-                f"check that masks/ contains *.png matching the image stems."
+                f"no (image, mask) pairs from the requested {len(images)} images "
+                f"under {masks_dir}; check that masks/ contains *.png matching the image stems."
             )
 
-        self.images = kept
+        self.images = sorted(kept)
         self.masks_dir = masks_dir
         self.transform = transform
 
@@ -99,6 +107,22 @@ class TTPLADataset(Dataset):
         mask = (mask > 127).astype(np.float32)
         out = self.transform(image=image, mask=mask)
         return out["image"], out["mask"].unsqueeze(0)
+
+
+def resolve_images_dir(data: Path, override: Path | None) -> Path:
+    """Pick the images directory.
+
+    Honours an explicit override; otherwise prefers ``<data>/images``
+    (the convention assumed by v1 and by ``scripts/ttpla_to_masks.py``)
+    and falls back to ``<data>`` itself for the flat layout TTPLA
+    actually ships (.jpg + .json side-by-side in the dataset root).
+    """
+    if override is not None:
+        return override
+    nested = data / "images"
+    if nested.is_dir():
+        return nested
+    return data
 
 
 def build_transforms(image_size: int) -> tuple[A.Compose, A.Compose]:
@@ -176,10 +200,42 @@ def main() -> None:
     p.add_argument("--out", type=Path, default=Path("weights"))
     p.add_argument("--workers", type=int, default=4)
     p.add_argument(
+        "--split-mode",
+        choices=["random", "canonical"],
+        default="canonical",
+        help=(
+            "How to partition images. 'canonical' (default) uses TTPLA's "
+            "official splitting_dataset_txt/ partition: train.txt (905), "
+            "val.txt (109), test.txt (220). 'random' reproduces the v1 "
+            "seed-42 random_split for re-running v1 exactly."
+        ),
+    )
+    p.add_argument(
+        "--images-dir",
+        type=Path,
+        default=None,
+        help="image directory (default: <data>/images, fallback <data>).",
+    )
+    p.add_argument(
+        "--masks-dir",
+        type=Path,
+        default=None,
+        help="mask directory (default: <data>/masks).",
+    )
+    p.add_argument(
+        "--splits-dir",
+        type=Path,
+        default=None,
+        help="canonical-splits directory (default: <data>/splitting_dataset_txt).",
+    )
+    p.add_argument(
         "--limit",
         type=int,
         default=0,
-        help="train on first N image/mask pairs (0 = all). Useful for smoke tests.",
+        help=(
+            "trim the train subset to first N pairs (0 = all). Useful "
+            "for smoke tests; in canonical mode val/test stay intact."
+        ),
     )
     p.add_argument(
         "--resume",
@@ -192,14 +248,33 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     pl.seed_everything(42)
 
-    train_tf, val_tf = build_transforms(args.image_size)
-    full = TTPLADataset(args.data, transform=train_tf, limit=args.limit)
-    n_val = max(1, len(full) // 10)
-    n_train = len(full) - n_val
-    train_ds, val_ds = torch.utils.data.random_split(
-        full, [n_train, n_val], generator=torch.Generator().manual_seed(42)
-    )
-    val_ds.dataset = TTPLADataset(args.data, transform=val_tf, limit=args.limit)
+    image_size = args.image_size
+
+    images_dir = resolve_images_dir(args.data, args.images_dir)
+    masks_dir = args.masks_dir or (args.data / "masks")
+    splits_dir = args.splits_dir or (args.data / "splitting_dataset_txt")
+
+    train_tf, val_tf = build_transforms(image_size)
+
+    if args.split_mode == "canonical":
+        train_imgs, val_imgs, _test_imgs = load_canonical_splits(splits_dir, images_dir)
+        if args.limit > 0:
+            train_imgs = train_imgs[: args.limit]
+        train_ds: Dataset = TTPLADataset(train_imgs, masks_dir, transform=train_tf)
+        val_ds: Dataset = TTPLADataset(val_imgs, masks_dir, transform=val_tf)
+    else:
+        all_images = discover_images(images_dir)
+        if args.limit > 0:
+            all_images = all_images[: args.limit]
+        full = TTPLADataset(all_images, masks_dir, transform=train_tf)
+        n_val = max(1, len(full) // 10)
+        n_train = len(full) - n_val
+        train_ds, val_ds = torch.utils.data.random_split(
+            full, [n_train, n_val], generator=torch.Generator().manual_seed(42)
+        )
+        # The random_split shares a single underlying transform; for the
+        # validation subset we substitute a no-augmentation pipeline.
+        val_ds.dataset = TTPLADataset(all_images, masks_dir, transform=val_tf)
 
     train_loader = DataLoader(
         train_ds,
@@ -237,12 +312,14 @@ def main() -> None:
         raise FileNotFoundError(f"--resume path not found: {resume_path}")
     trainer.fit(model, train_loader, val_loader, ckpt_path=resume_path)
 
-    # Save a clean state_dict for the inference server
+    # Save a clean state_dict for the inference server. v2 weights live
+    # alongside v1 weights; the inference path can be pointed at either.
     best_path = ckpt.best_model_path
     print(f"\nBest checkpoint: {best_path}")
     best = ConductorModule.load_from_checkpoint(best_path)
-    torch.save(best.model.state_dict(), args.out / "unet_resnet34_ttpla.pth")
-    print(f"Saved deployable weights → {args.out / 'unet_resnet34_ttpla.pth'}")
+    out_name = "unet_resnet34_ttpla.pth" if args.split_mode == "random" else "unet_resnet34_ttpla_v2.pth"
+    torch.save(best.model.state_dict(), args.out / out_name)
+    print(f"Saved deployable weights → {args.out / out_name}")
 
 
 if __name__ == "__main__":
