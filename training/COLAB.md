@@ -46,22 +46,39 @@ rasterise the polygon annotations to PNG masks.
 !python -m training.train \
     --data /content/drive/MyDrive/ttpla \
     --epochs 50 \
-    --batch-size 16 \
-    --image-size 512 \
+    --batch-size 12 \
+    --resolution 768 \
+    --split-mode canonical \
     --out /content/drive/MyDrive/ktp-weights
 ```
+
+The `--resolution 768` and `--batch-size 12` defaults match the v2
+recipe (see `docs/methodology.md` §10). `--split-mode canonical` (the
+default) reads TTPLA's official three-way partition from
+`splitting_dataset_txt/` (905 train / 109 val / 220 test); pass
+`--split-mode random` only when re-running the v1 baseline.
 
 Optional flags:
 
 - `--limit N` — train on the first `N` (image, mask) pairs only. Use
-  this for a 1-epoch smoke test before committing to the full run.
+  this for a 1-epoch smoke test before committing to the full run. In
+  canonical mode, `--limit` trims the training split only; val and
+  test integrity are preserved.
 - `--resume /content/drive/MyDrive/ktp-weights/last.ckpt` — continue
   from a Lightning checkpoint (loads optimiser state too). Useful if
-  the Colab session disconnects mid-training.
+  the Colab session disconnects mid-training; the `ModelCheckpoint`
+  callback writes to `--out` on every val-IoU improvement.
 
-T4 GPU on Colab free tier should complete 50 epochs in ~2 hours for the
-TTPLA scale. Watch out for the 12-hour Colab session limit — 50 epochs
-fits easily.
+T4 GPU on Colab free tier should complete 50 epochs in ~3 hours at
+768×768 (≈1.5× the v1 512×512 wall-clock). Watch out for the 12-hour
+Colab session limit. If a session times out before 50 epochs complete,
+the procedure is:
+
+1. Note the latest `last.ckpt` Lightning wrote into `--out`.
+2. Reconnect Colab and re-run the same training command with
+   `--resume <path-to-last.ckpt>` appended.
+3. Optimiser state, LR-schedule position, and epoch counter resume
+   from the checkpoint, so the cosine schedule continues smoothly.
 
 ## Cell 4 — copy weights to the laptop
 

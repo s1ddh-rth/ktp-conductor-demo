@@ -6,9 +6,11 @@ Usage on Colab (T4)
 2. Mount Drive, clone this repo, install [training] extras.
 3. Run:  python -m training.train --data /content/drive/MyDrive/ttpla --epochs 50
 
-The defaults below fit comfortably on a 16 GB T4 at 512×512, batch size
-16. For a GTX 1050 Ti (4 GB) you would set --batch-size 4 --image-size 512
-which works but trains ~5× more slowly.
+The v2 defaults are tuned for a 16 GB T4 at 768×768, batch size 12
+(matches the production sliding-window tile size; see
+``docs/methodology.md`` §10). For a GTX 1050 Ti (4 GB) you would set
+``--batch-size 2 --resolution 512`` which works but trains substantially
+more slowly and re-introduces the v1 inference-path drift.
 
 CLI flags
 ---------
@@ -17,11 +19,14 @@ CLI flags
                 <data>/images/ + <data>/masks/   (preferred, back-compat)
                 <data>/*.jpg   + <data>/masks/   (TTPLA's actual flat layout)
               Override either with --images-dir / --masks-dir.
---split-mode  'canonical' (default) uses TTPLA's official three-way
+--split-mode  'canonical' (default, v2) uses TTPLA's official three-way
               partition from <data>/splitting_dataset_txt/
               (train.txt: 905, val.txt: 109, test.txt: 220 = 1234 images).
               'random' reproduces v1's seed-42 random_split over all
               images (preserved for re-running v1 only).
+--resolution  training crop / validation resize size (default 768).
+              Matches the production sliding-window tile so train- and
+              serve-time see cables at the same pixel width.
 --limit N     trim training subset to first N pairs (default 0 = all);
               useful for smoke-testing the pipeline before a full run.
               In canonical mode this trims the training split only —
@@ -194,8 +199,13 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--data", type=Path, required=True)
     p.add_argument("--epochs", type=int, default=50)
-    p.add_argument("--batch-size", type=int, default=16)
-    p.add_argument("--image-size", type=int, default=512)
+    # v2 defaults: bs 12 fits 768×768 on a 16 GB T4 alongside AMP
+    # activations; bs 16 OOMs at this resolution. Resolution 768 matches
+    # the production sliding-window tile so train- and serve-time see
+    # cables at the same pixel width.
+    p.add_argument("--batch-size", type=int, default=12)
+    p.add_argument("--resolution", type=int, default=768,
+                   help="training crop / validation resize size (default 768).")
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--out", type=Path, default=Path("weights"))
     p.add_argument("--workers", type=int, default=4)
@@ -204,10 +214,10 @@ def main() -> None:
         choices=["random", "canonical"],
         default="canonical",
         help=(
-            "How to partition images. 'canonical' (default) uses TTPLA's "
-            "official splitting_dataset_txt/ partition: train.txt (905), "
-            "val.txt (109), test.txt (220). 'random' reproduces the v1 "
-            "seed-42 random_split for re-running v1 exactly."
+            "How to partition images. 'canonical' (default, v2) uses "
+            "TTPLA's official splitting_dataset_txt/ partition: train.txt "
+            "(905), val.txt (109), test.txt (220). 'random' reproduces "
+            "the v1 seed-42 random_split for re-running v1 exactly."
         ),
     )
     p.add_argument(
@@ -248,7 +258,7 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     pl.seed_everything(42)
 
-    image_size = args.image_size
+    image_size = args.resolution
 
     images_dir = resolve_images_dir(args.data, args.images_dir)
     masks_dir = args.masks_dir or (args.data / "masks")
