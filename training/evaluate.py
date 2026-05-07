@@ -2,13 +2,15 @@
 
 Reports the metric family chosen in `docs/evaluation.md`:
 
-- Pixel **IoU**, **precision**, **recall**, **F1** at threshold 0.5.
+- Pixel **IoU**, **precision**, **recall**, **F1** at the configured
+  threshold (default 0.5; sweepable via ``--sweep``).
 - **CCQ** (Completeness, Correctness, Quality) at a 3-pixel buffer
   tolerance, after Wiedemann, Heipke, Mayer, Jamet (1998),
   *Empirical Evaluation of Automatically Extracted Road Axes*. CCQ
   is the right metric family for thin-structure tasks: pixel IoU
   under-rewards a 2-pixel-offset trace of a 3-pixel-wide cable, but
   CCQ accepts it as operationally correct.
+- **ECE** (Expected Calibration Error, 10-bin) per Guo et al. (2017).
 
 For consistency with the live demo, inference uses the production
 ``ConductorSegmenter`` from ``app.ml.model`` (sliding-window with
@@ -16,28 +18,38 @@ Hann-windowed stitching). We never re-implement the inference path
 just for evaluation — drift between train-time and serve-time
 metrics is a common source of confusion.
 
+Two split-strategy modes are supported:
+
+- ``random`` (v1 historical): seed-42 random partition over all
+  images, matching the trainer's old ``random_split``.
+- ``session``: TTPLA filename-prefix grouping (legacy v1 cross-flight).
+- ``canonical`` (v2 default): uses TTPLA's official
+  ``splitting_dataset_txt/`` partition shared with the v2 trainer
+  via ``training.canonical``. The ``--split test`` argument under
+  this strategy resolves to the 220-image canonical test set.
+
 Usage
 -----
     python -m training.evaluate \\
         --data /path/to/ttpla \\
-        --weights weights/unet_resnet34_ttpla.pth \\
-        --split val \\
-        --threshold 0.5 \\
+        --weights weights/unet_resnet34_ttpla_v2.pth \\
+        --split-strategy canonical \\
+        --split test \\
+        --tile-size 768 \\
         --tolerance 3 \\
         --n-failures 3 \\
-        --out docs/
+        --out docs/ \\
+        --report-name evaluation_results_v2.md
 
 Outputs
 -------
-- ``docs/evaluation_results.md`` with the metrics tabulated.
-- ``docs/screenshots/eval/successes/{i}.png`` — three success panels.
-- ``docs/screenshots/eval/failures/{i}.png`` — three failure panels.
+- ``docs/<report-name>`` with the metrics tabulated (default
+  ``evaluation_results_v2.md`` for the canonical/v2 strategy).
+- ``docs/screenshots/eval/<strategy>/successes/{i}.png`` — N success panels.
+- ``docs/screenshots/eval/<strategy>/failures/{i}.png`` — N failure panels.
 
 Limitations
 -----------
-- The val/test split here is the same random 10/10 split used by the
-  trainer. For a production run we would use a *geographic* split,
-  per ``docs/evaluation.md`` §3.
 - CCQ relies on a buffer-distance approximation rather than a
   reference-line vector representation; on very dense networks the
   buffers can over-count. With TTPLA's sparse transmission lines the
@@ -57,10 +69,9 @@ from scipy.ndimage import distance_transform_edt
 from skimage.morphology import skeletonize
 
 from app.ml.model import ConductorSegmenter
+from training.canonical import IMAGE_EXTS, load_canonical_splits
 
 log = structlog.get_logger()
-
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
 
 
 @dataclass
@@ -294,26 +305,47 @@ def render_panel(
 
 
 # ── main ───────────────────────────────────────────────────────────────
+def _resolve_images_dir(data: Path, override: Path | None) -> Path:
+    """Mirror of training/train.py's resolver: prefer <data>/images/, fall back to <data>."""
+    if override is not None:
+        return override
+    nested = data / "images"
+    return nested if nested.is_dir() else data
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("--data", type=Path, required=True, help="TTPLA root with images/ + masks/")
+    p.add_argument("--data", type=Path, required=True, help="TTPLA root (auto-detects images/ vs flat layout)")
     p.add_argument(
         "--weights",
         type=Path,
-        default=Path("weights/unet_resnet34_ttpla.pth"),
-        help="path to .pth state_dict (Lightning .ckpt also accepted)",
+        default=Path("weights/unet_resnet34_ttpla_v2.pth"),
+        help="path to .pth state_dict (Lightning .ckpt also accepted). Defaults to v2 weights.",
     )
-    p.add_argument("--split", choices=["train", "val", "test"], default="val")
+    p.add_argument(
+        "--images-dir", type=Path, default=None,
+        help="image directory (default: <data>/images, fallback <data>).",
+    )
+    p.add_argument(
+        "--masks-dir", type=Path, default=None,
+        help="mask directory (default: <data>/masks).",
+    )
+    p.add_argument(
+        "--splits-dir", type=Path, default=None,
+        help="canonical-splits dir (default: <data>/splitting_dataset_txt). "
+             "Only used when --split-strategy canonical.",
+    )
+    p.add_argument("--split", choices=["train", "val", "test"], default="test")
     p.add_argument(
         "--split-strategy",
-        choices=["random", "session"],
-        default="random",
+        choices=["random", "session", "canonical"],
+        default="canonical",
         help=(
-            "How the train/val/test partition is computed. 'random' "
-            "uses the trainer's seed-42 random_split (matches what the "
-            "model was trained against). 'session' holds out entire "
-            "TTPLA capture sessions (filename prefixes 14, 1000 by "
-            "default), giving a stricter cross-flight evaluation."
+            "How the train/val/test partition is computed. 'canonical' "
+            "(default, v2) uses TTPLA's official splitting_dataset_txt/ "
+            "partition shared with the v2 trainer. 'random' uses the v1 "
+            "seed-42 random_split. 'session' holds out entire TTPLA "
+            "capture sessions (filename prefixes 14, 1000 by default)."
         ),
     )
     p.add_argument(
@@ -323,11 +355,44 @@ def main() -> int:
         help="Filename prefixes treated as held-out sessions (only used with --split-strategy session)",
     )
     p.add_argument("--threshold", type=float, default=0.5)
+    p.add_argument(
+        "--sweep",
+        nargs="*",
+        type=float,
+        default=None,
+        help=(
+            "Optional probability thresholds for an additional sweep table "
+            "(e.g. --sweep 0.3 0.4 0.5 0.6 0.7). The primary metrics still "
+            "use --threshold; the sweep is reported as a separate table."
+        ),
+    )
     p.add_argument("--tolerance", type=int, default=3, help="CCQ buffer in pixels")
+    p.add_argument(
+        "--tile-size",
+        type=int,
+        default=768,
+        help=(
+            "Sliding-window tile size at inference. Default 768 matches the "
+            "v2 training resolution; pass 512 to reproduce v1 inference."
+        ),
+    )
     p.add_argument("--n-failures", type=int, default=3)
     p.add_argument("--n-successes", type=int, default=3)
     p.add_argument("--limit", type=int, default=0, help="evaluate at most N images (0 = all)")
     p.add_argument("--out", type=Path, default=Path("docs"))
+    p.add_argument(
+        "--report-name",
+        type=str,
+        default=None,
+        help=(
+            "Filename for the markdown report under --out. Defaults: "
+            "'evaluation_results_v2.md' for the canonical strategy, "
+            "'evaluation_results.md' for random, "
+            "'evaluation_results_session.md' for session. The default also "
+            "guards the v1 random/session reports against accidental "
+            "overwrite by canonical runs."
+        ),
+    )
     p.add_argument(
         "--ece-bins",
         type=int,
@@ -336,39 +401,65 @@ def main() -> int:
     )
     args = p.parse_args()
 
-    images_dir = args.data / "images"
-    masks_dir = args.data / "masks"
+    images_dir = _resolve_images_dir(args.data, args.images_dir)
+    masks_dir = args.masks_dir or (args.data / "masks")
+    splits_dir = args.splits_dir or (args.data / "splitting_dataset_txt")
     if not images_dir.is_dir() or not masks_dir.is_dir():
         log.error("eval.missing_dirs", images=str(images_dir), masks=str(masks_dir))
         return 2
 
-    all_images = sorted(p for p in images_dir.iterdir() if p.suffix in IMAGE_EXTS)
-    all_images = [p for p in all_images if (masks_dir / f"{p.stem}.png").exists()]
-    if not all_images:
-        log.error("eval.no_pairs", images_dir=str(images_dir))
-        return 2
-
-    if args.split_strategy == "session":
-        images = select_split_by_session(
-            all_images, args.split, test_prefixes=args.test_prefixes
-        )
+    if args.split_strategy == "canonical":
+        train_paths, val_paths, test_paths = load_canonical_splits(splits_dir, images_dir)
+        canonical_buckets = {"train": train_paths, "val": val_paths, "test": test_paths}
+        chosen = canonical_buckets[args.split]
+        # Drop images without a matching rasterised mask — same policy as
+        # the v1 path so partial mask conversions don't crash the run.
+        images = [p for p in chosen if (masks_dir / f"{p.stem}.png").exists()]
+        if len(images) < len(chosen):
+            log.warning(
+                "eval.canonical_mask_gaps",
+                missing=len(chosen) - len(images),
+                kept=len(images),
+            )
     else:
-        images = select_split(all_images, args.split)
+        all_images = sorted(p for p in images_dir.iterdir() if p.suffix in IMAGE_EXTS)
+        all_images = [p for p in all_images if (masks_dir / f"{p.stem}.png").exists()]
+        if not all_images:
+            log.error("eval.no_pairs", images_dir=str(images_dir))
+            return 2
+        if args.split_strategy == "session":
+            images = select_split_by_session(
+                all_images, args.split, test_prefixes=args.test_prefixes
+            )
+        else:
+            images = select_split(all_images, args.split)
     if args.limit > 0:
         images = images[: args.limit]
     log.info(
         "eval.start",
         split=args.split,
         strategy=args.split_strategy,
+        tile_size=args.tile_size,
         n_images=len(images),
     )
 
     segmenter = ConductorSegmenter(weights_path=args.weights)
+    # Override the production-default tile size so v2 evaluation runs at
+    # the same 768×768 the v2 model trained against. Without this, the
+    # segmenter would use settings.tile_size (512) and re-introduce the
+    # inference-path drift v2 was retrained to fix.
+    segmenter.tile = args.tile_size
     if not args.weights.exists():
         log.warning("eval.no_weights — running with ImageNet init; numbers are not meaningful")
 
     per_image: list[PerImage] = []
     pred_cache: dict[str, np.ndarray] = {}
+    # If a threshold sweep is requested, accumulate per-image scores at
+    # each sweep threshold so the report can include the table without
+    # re-running inference. We hold quantised uint8 prob maps + GT masks
+    # to keep the working set small (≈8 MB per 4K image vs ≈32 MB float32).
+    sweep_thresholds: list[float] = sorted(args.sweep) if args.sweep else []
+    sweep_per_image: dict[float, list[PerImage]] = {t: [] for t in sweep_thresholds}
     # Accumulators for ECE — concatenating raw probs from full-sized
     # masks across N images would balloon memory, so we sub-sample
     # 50k pixels per image (ratio of positive vs negative preserved).
@@ -397,6 +488,26 @@ def main() -> int:
             )
         )
         pred_cache[img_path.name] = pred
+
+        # Threshold sweep: same prob map, different cuts. CCQ has the
+        # heaviest cost (skeletonise + EDT) so we only re-skeletonise
+        # the prediction; the GT skeleton is independent of threshold.
+        for t in sweep_thresholds:
+            pred_t = prob > t
+            m_t = pixel_metrics(pred_t, gt)
+            c_t = ccq(pred_t, gt, tolerance_px=args.tolerance)
+            sweep_per_image[t].append(
+                PerImage(
+                    name=img_path.name,
+                    iou=m_t["iou"],
+                    precision=m_t["precision"],
+                    recall=m_t["recall"],
+                    f1=m_t["f1"],
+                    ccq_completeness=c_t["completeness"],
+                    ccq_correctness=c_t["correctness"],
+                    ccq_quality=c_t["quality"],
+                )
+            )
 
         # Sub-sample for ECE — 50k pixels per image is plenty for a
         # 10-bin reliability estimate without spending RAM linearly
@@ -452,9 +563,11 @@ def main() -> int:
     worst = informative[: args.n_failures]
     best = sorted(informative, key=lambda p: -p.ccq_quality)[: args.n_successes]
 
-    eval_dir = args.out / "screenshots" / "eval"
+    # Strategy-scoped output directories so v1 and v2 panels coexist.
+    eval_dir = args.out / "screenshots" / "eval" / args.split_strategy
     (eval_dir / "successes").mkdir(parents=True, exist_ok=True)
     (eval_dir / "failures").mkdir(parents=True, exist_ok=True)
+    panel_prefix = f"screenshots/eval/{args.split_strategy}"
 
     for i, item in enumerate(best, 1):
         img_path = next(p for p in images if p.name == item.name)
@@ -467,21 +580,31 @@ def main() -> int:
         render_panel(img_path, gt, pred_cache[item.name], eval_dir / "failures" / f"{i}.png")
 
     # Markdown report
-    note_strategy = (
-        "Random seed-42 partition over all TTPLA images — matches the "
-        "trainer's `random_split`. Methodologically weak: spatial "
-        "correlation between same-flight images inflates apparent "
-        "generalisation. Reported here for reproducibility against the "
-        "weights as trained."
-        if args.split_strategy == "random"
-        else (
+    if args.split_strategy == "random":
+        note_strategy = (
+            "Random seed-42 partition over all TTPLA images — matches the "
+            "v1 trainer's `random_split`. Methodologically weak: spatial "
+            "correlation between same-flight images inflates apparent "
+            "generalisation. Reported here for reproducibility against "
+            "the v1 weights."
+        )
+    elif args.split_strategy == "session":
+        note_strategy = (
             "Session-grouped split: filename prefixes "
             f"`{', '.join(args.test_prefixes)}` are held out entirely. "
             "Cross-flight evaluation — stricter than random, more "
             "representative of how the model would behave on a new "
             "DNO survey region."
         )
-    )
+    else:  # canonical
+        note_strategy = (
+            "Canonical TTPLA split (Abdelfattah et al. 2020), test bucket "
+            "of `splitting_dataset_txt/test.txt` (220 images). Shared "
+            "with the v2 trainer, which trained against `train.txt` (905) "
+            "and validated against `val.txt` (109). The 8 unassigned "
+            "post-publication additions are excluded to preserve split "
+            "integrity. This is the v2 reproducibility-aligned report."
+        )
     ece_note = (
         f"{summary['ece']:.4f}" if summary["ece"] == summary["ece"] else "n/a"
     )
@@ -490,7 +613,7 @@ def main() -> int:
         "# Evaluation results",
         "",
         f"_Generated by `training/evaluate.py` on the TTPLA `{args.split}` split, "
-        f"strategy `{args.split_strategy}`._",
+        f"strategy `{args.split_strategy}`, sliding-window tile {args.tile_size} px._",
         "",
         "## Headline numbers",
         "",
@@ -498,6 +621,7 @@ def main() -> int:
         "|---|---|",
         f"| Images evaluated | {summary['n_images']} |",
         f"| Split strategy | `{summary['strategy']}` |",
+        f"| Sliding-window tile size | {args.tile_size} px |",
         f"| Threshold | {summary['threshold']} |",
         f"| CCQ buffer tolerance | {summary['ccq_tolerance_px']} px |",
         f"| Pixel IoU | {summary['iou_macro']:.4f} |",
@@ -509,34 +633,56 @@ def main() -> int:
         f"| **CCQ quality (headline)** | **{summary['ccq_quality_macro']:.4f}** |",
         f"| ECE ({args.ece_bins}-bin, Guo et al. 2017) | {ece_note} |",
         "",
+    ]
+
+    if sweep_thresholds:
+        def _avg(items: list[PerImage], field: str) -> float:
+            return float(np.mean([getattr(p, field) for p in items])) if items else float("nan")
+
+        md += [
+            "## Threshold sweep",
+            "",
+            "Same probability maps, re-thresholded. Useful for finding the "
+            "F1- or CCQ-Quality-maximising operating point without retraining.",
+            "",
+            "| τ | IoU | Precision | Recall | F1 | CCQ-Q |",
+            "|---|---|---|---|---|---|",
+        ]
+        for t in sweep_thresholds:
+            items = sweep_per_image[t]
+            md.append(
+                f"| {t:.2f} "
+                f"| {_avg(items, 'iou'):.4f} "
+                f"| {_avg(items, 'precision'):.4f} "
+                f"| {_avg(items, 'recall'):.4f} "
+                f"| {_avg(items, 'f1'):.4f} "
+                f"| {_avg(items, 'ccq_quality'):.4f} |"
+            )
+        md.append("")
+
+    md += [
         "## Method",
         "",
         "Inference uses the production `ConductorSegmenter` (sliding-window "
-        "tiling with Hann-windowed stitching). CCQ follows Wiedemann, Heipke, "
-        "Mayer, Jamet (1998), *Empirical Evaluation of Automatically "
-        "Extracted Road Axes*. Pixel IoU is included for comparison with "
-        "prior work that reports it as the primary metric, even though it "
-        "under-rewards near-misses on thin structures. Calibration is "
-        "measured with the Expected Calibration Error (Guo, Pleiss, Sun & "
-        "Weinberger, 2017) over a 50k-pixel-per-image sub-sample.",
+        f"tiling at {args.tile_size}×{args.tile_size} with Hann-windowed "
+        "stitching). CCQ follows Wiedemann, Heipke, Mayer, Jamet (1998), "
+        "*Empirical Evaluation of Automatically Extracted Road Axes*. "
+        "Pixel IoU is included for comparison with prior work that reports "
+        "it as the primary metric, even though it under-rewards near-misses "
+        "on thin structures. Calibration is measured with the Expected "
+        "Calibration Error (Guo, Pleiss, Sun & Weinberger, 2017) over a "
+        "50k-pixel-per-image sub-sample.",
         "",
         "### Split strategy",
         "",
         note_strategy,
-        "",
-        "TTPLA's repository ships a canonical `splitting_dataset_txt/` "
-        "partition (Abdelfattah et al. 2020) which this evaluation does "
-        "**not** use; the random-split numbers above are therefore not "
-        "directly comparable with values reported in the original paper. "
-        "Re-run with `--split-strategy session` for a stricter held-out "
-        "evaluation that approximates the canonical-split protocol.",
         "",
         "## Qualitative results",
         "",
         f"### {len(best)} representative successes",
         "",
         *[
-            f"![success {i}](screenshots/eval/successes/{i}.png)\n"
+            f"![success {i}]({panel_prefix}/successes/{i}.png)\n"
             f"_{item.name} — IoU {item.iou:.3f}, CCQ-Q {item.ccq_quality:.3f}._\n"
             for i, item in enumerate(best, 1)
         ],
@@ -544,19 +690,30 @@ def main() -> int:
         f"### {len(worst)} instructive failures",
         "",
         *[
-            f"![failure {i}](screenshots/eval/failures/{i}.png)\n"
+            f"![failure {i}]({panel_prefix}/failures/{i}.png)\n"
             f"_{item.name} — IoU {item.iou:.3f}, CCQ-Q {item.ccq_quality:.3f}._\n"
             "_Diagnosis: hand-classify into one of the texture / scale / "
             "context categories from `docs/methodology.md` §7 after running._\n"
             for i, item in enumerate(worst, 1)
         ],
     ]
-    out_md = args.out / "evaluation_results.md"
+    # Default report name guards v1 reports against accidental overwrite
+    # by canonical (v2) runs. Strategy-named files keep history visible.
+    if args.report_name:
+        report_name = args.report_name
+    elif args.split_strategy == "canonical":
+        report_name = "evaluation_results_v2.md"
+    elif args.split_strategy == "session":
+        report_name = "evaluation_results_session.md"
+    else:
+        report_name = "evaluation_results.md"
+    out_md = args.out / report_name
     out_md.write_text("\n".join(md))
     log.info("eval.report_written", path=str(out_md))
 
     # Also dump per-image JSON for downstream analysis
-    (args.out / "evaluation_per_image.json").write_text(
+    per_image_name = f"evaluation_per_image_{args.split_strategy}.json"
+    (args.out / per_image_name).write_text(
         json.dumps([asdict(p) for p in per_image], indent=2)
     )
     return 0
