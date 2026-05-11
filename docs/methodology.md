@@ -472,6 +472,19 @@ imagery (0.3066 vs 0.3067). On the genuinely held-out comparison
 0.4226, CCQ-Q 0.2323 → 0.4567 — with no other changes than the
 two §10.1 ones. ECE remained excellent at 0.0153.
 
+**Note on direct v1-vs-v2 comparison.** A controlled comparison
+running v2 weights on v1's 124-image random test split would not
+be cleanly interpretable: v1's random split was drawn independently
+of TTPLA's canonical splits, and approximately 80% of v1's test
+images are in v2's training and validation sets. The headline
+v1→v2 improvement (IoU 0.139 → 0.307) is therefore reported
+across different test distributions; the canonical-test result is
+the cleaner generalisation number for v2 and is the result
+comparable to other TTPLA work in the literature. v1's results
+are preserved unchanged for methodological transparency, with the
+understanding that they were obtained on a different evaluation
+regime that is documented but not directly comparable.
+
 ### 10.4 Honest disclosures preserved
 
 - **Inference-path drift identified in v1 informs the v2 design;
@@ -512,20 +525,23 @@ noise. Hand-classification of the three:
   against pine vegetation; the model produces no prediction.
   Direct evidence that vegetation-rich pretraining data is needed
   in any Phase-1 SSEN data acquisition.
-- **Failure 1 (`108_1830.jpg`, IoU 0.000, CCQ-Q 0.000) —
-  diagnosis pending.** The image appears to contain predicted
-  cables, yet the reported IoU is 0.000. Likely either a
-  sub-pixel-precision miss inside the 3-px CCQ buffer or a
-  ground-truth annotation gap. Either pixel-precision miss within
-  tolerance or annotation gap; **neither is a representative
-  failure mode** and this case should not be read as a model
-  pathology until the underlying cause is confirmed.
+- **Failure 1 (`108_1830.jpg`, IoU 0.000): annotation gap rather
+  than model failure.** The prediction overlay shows the model
+  correctly identifying cables visible in the input image, but
+  the TTPLA ground-truth polygons for this image are incomplete
+  and do not include the predicted cables. IoU is therefore zero
+  by construction. This finding is consistent with known
+  limitations of single-pass annotation in academic datasets,
+  and argues for project-specific labelling effort during any
+  SSEN-data acquisition phase rather than reliance on transfer
+  from TTPLA-quality labels alone.
 
 The v2 failure pattern reinforces the v1 read: the failures that
 remain are the §7.3 context failures and the LV-domain
-distribution shift §6 names. v2 fixed the §7.2 scale failure;
-v2 did not (and was not designed to) fix the §6 domain-gap
-problem.
+distribution shift §6 names. v2 substantially reduced the §7.2
+scale failure (recall 0.1546 → 0.3382, but still ≈ two-thirds of
+cable pixels missed at τ=0.50); v2 did not (and was not designed
+to) address the §6 domain-gap problem.
 
 ## References
 

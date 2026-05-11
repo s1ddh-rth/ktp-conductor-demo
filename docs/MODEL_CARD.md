@@ -143,8 +143,88 @@ If you reference this prototype, please also cite:
 }
 ```
 
+## v2 model card — `unet_resnet34_ttpla_v2`
+
+The v2 weights at `weights/unet_resnet34_ttpla_v2.pth` are the
+current deployed model. The v1 sections above are preserved as
+historical record; differences from v1 are documented in
+`docs/methodology.md` §10. v2 architecture, loss, optimiser, and
+augmentation are identical to v1; only the training resolution
+and split protocol changed.
+
+### v2 model details (delta from v1)
+
+| | |
+|---|---|
+| **Model version** | v2 |
+| **Training resolution** | 768 × 768 (v1: 512 × 512) |
+| **Training schedule** | Up to 50 epochs, batch size 12, mixed precision (v1: batch size 16). |
+| **Inference tile size** | 768 × 768 sliding window with 64-pixel overlap and Hann-windowed stitching (v1: 512 × 512). Matches the training resolution to close the inference-path drift documented in v1's evaluation. |
+| **Producer** | `training/train.py` with `--split-mode canonical --resolution 768 --batch-size 12`. |
+
+### v2 training data
+
+| | |
+|---|---|
+| **Source** | TTPLA dataset (Abdelfattah et al. 2020), official canonical splits from `splitting_dataset_txt/`. |
+| **Train / val / test split** | 905 / 109 / 220 from `train.txt` / `val.txt` / `test.txt`; total 1,234 images. The 8 unassigned post-publication images in the 1,242-image directory are excluded to preserve split integrity. |
+| **Class taxonomy** | Unchanged from v1: only `cable` is used as the positive class. |
+
+### v2 evaluation
+
+Full report: `docs/evaluation_results_v2.md`. Numbers below are on
+the 220-image canonical test split, sliding-window inference at
+768 px, CCQ buffer 3 px.
+
+| Metric | τ=0.50 (convention) | τ=0.30 (operational) |
+|---|---:|---:|
+| Pixel IoU | 0.307 | 0.318 |
+| Pixel F1 | 0.423 | 0.436 |
+| CCQ Quality | 0.457 | 0.462 |
+| ECE (10-bin) | 0.015 | 0.015 |
+
+**Operational threshold.** τ=0.30 is the empirically-optimal
+operating point of the calibrated v2 model on the canonical test
+set — marginally better on every operational metric than the
+convention threshold τ=0.50, with precision trading down very
+slightly (0.7478 vs 0.7561). ECE is unchanged because it is a
+property of the probability map, not the threshold.
+
+### v2 known failure modes
+
+Hand-classified from the three IoU=0 failures in
+`docs/screenshots/eval/canonical/failures/` (see
+`docs/methodology.md` §10.4 for full diagnoses):
+
+- **TTPLA → urban-LV domain shift** (`11_00098.jpg`) — single
+  thin cable against a parking-lot scene; the model produces no
+  prediction. This is the textbook domain-gap failure mode.
+- **Vegetation-background confusion** (`44_01131.jpg`) — two
+  clearly visible cables against pine vegetation; the model
+  produces no prediction. Argues for vegetation-rich pretraining
+  data in any Phase-1 SSEN data acquisition.
+- **Annotation gap** (`108_1830.jpg`) — the prediction overlay
+  shows the model correctly identifying cables visible in the
+  input, but the TTPLA ground-truth polygons for this image are
+  incomplete. IoU is zero by construction, not by model failure.
+
+The v1 failure-mode categories (texture / scale / context, §7)
+remain the right taxonomy. v2's empirical pattern: the §7.2 scale
+failure was substantially reduced by the 768-px retrain; what
+remains are §7.3 context failures and §6 domain-shift cases.
+
+### v2 carbon and compute footprint
+
+- **Training**: ~3 hours on a single Colab T4 GPU at fp16-mixed
+  precision; rough peak power 70 W → ~0.5 kWh per training run
+  (estimated GPU-time only; excludes CPU/RAM overhead).
+- **Inference**: ~300–500 ms per 768 × 768 tile on a GTX 1050 Ti
+  (≈1.5–2× the v1 512-tile latency); CPU inference is ~12 s
+  per tile.
+
 ## Card history
 
 | Version | Date | Changes |
 |---|---|---|
 | 0.1 | 2026-05 | Initial card. Architecture, training schedule, intended use, limitations, evaluation framework. |
+| 0.2 | 2026-05 | v2 model card section added. Training at 768×768 with TTPLA canonical splits (905 / 109 / 220); evaluation on 220-image canonical test (IoU 0.307, F1 0.423, CCQ-Q 0.457, ECE 0.015 at τ=0.50). Failure modes hand-classified. v1 sections preserved unchanged. |
