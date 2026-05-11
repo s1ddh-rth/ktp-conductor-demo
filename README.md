@@ -39,6 +39,62 @@ the consequence rather than dressing over it:
 This framing is more useful as a research artefact than chasing a
 single headline IoU on TTPLA.
 
+## Headline results
+
+The current model (v2) is a TTPLA-trained U-Net (ResNet34 encoder)
+evaluated against the dataset authors' canonical 220-image test
+split, with sliding-window inference at 768 px (the same resolution
+the model trains at). Full report:
+[`docs/evaluation_results_v2.md`](docs/evaluation_results_v2.md).
+
+| Metric | Value |
+|---|---:|
+| Pixel IoU | **0.307** |
+| Pixel F1 | **0.423** |
+| CCQ Quality (3-px buffer) | **0.457** |
+| Expected Calibration Error (10-bin) | **0.015** |
+
+Numbers above are at the convention threshold τ=0.50. The threshold
+sweep in the v2 report finds that **τ=0.30 is marginally better on
+every operational metric** (IoU 0.318, F1 0.436, CCQ-Q 0.462) — that
+is the production-recommended operating point for the calibrated
+model. ECE is unchanged because it's a property of the probability
+map, not the threshold.
+
+The story behind these numbers — why v1 reported IoU 0.139, why the
+session-grouped split returned IoU 0.307 but was leaked, and why v2's
+matched-resolution retrain on the canonical split is the methodology
+fix that closes both gaps — is told in
+[`docs/methodology.md`](docs/methodology.md) §10.
+
+### v1 historical results
+
+v1 numbers are preserved in
+[`docs/evaluation_results.md`](docs/evaluation_results.md) (random
+split) and
+[`docs/evaluation_results_session.md`](docs/evaluation_results_session.md)
+(session-grouped split). They are kept as the methodology-evolution
+narrative — both files document the v1 limitations (inference-path
+drift at 512 px sliding window, training-set leakage in the
+session-grouped evaluation) that the v2 retrain was designed to
+address. They are not deleted because the round trip from "this
+might be why v1 silently under-recalls" to v2's empirical
+confirmation is itself the research finding the methodology doc
+turns on.
+
+| Metric | v1 random | v1 session† | v2 canonical |
+|---|---:|---:|---:|
+| Images evaluated | 124 | 41 | 220 |
+| Pixel IoU | 0.1387 | 0.3067 | **0.3066** |
+| Pixel F1 | 0.2018 | 0.4174 | **0.4226** |
+| CCQ Quality | 0.2323 | 0.5296 | **0.4567** |
+| ECE (10-bin) | 0.0190 | 0.0156 | **0.0153** |
+
+† v1 session numbers are inflated by training-set leakage as
+documented in `docs/evaluation_results_session.md`. The v1 random
+row is the only v1 number that is genuinely held out and is the
+correct comparison point for v2.
+
 ## What's in here
 
 | Module | What it does | Where |

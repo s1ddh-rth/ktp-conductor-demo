@@ -60,22 +60,46 @@ evaluation to avoid optimism bias.
 
 ### Prototype evaluation
 
-TTPLA does not ship with a canonical train/val/test split. The
-prototype uses:
+The v1 trainer used a seed-42 random 80/10/10 partition over all
+TTPLA images:
 
-- **Train**: 80% of images, randomly selected with seed 42.
+- **Train**: 80%, randomly selected with seed 42.
 - **Validation**: 10%, selected for hyperparameter / threshold choices.
-- **Test**: 10%, held out and never touched until the final
-  evaluation pass.
+- **Test**: 10%, held out until the final evaluation pass.
+
+### v2 update — TTPLA's canonical split is what we now use
+
+The original claim above ("TTPLA does not ship with a canonical
+split") was wrong. The dataset authors do publish a canonical
+three-way split as `splitting_dataset_txt/{train,val,test}.txt`
+totalling 1234 images (905 / 109 / 220), with 8 unassigned
+post-publication images excluded. The v2 retrain uses this split
+end-to-end, and the v2 evaluation runs against the 220-image test
+bucket. Full report:
+[`docs/evaluation_results_v2.md`](evaluation_results_v2.md).
+
+The v2 canonical-split evaluation has been completed and achieves
+**CCQ-Q 0.457 at τ=0.50**, **CCQ-Q 0.462 at τ=0.30**, with
+**ECE 0.015 across both threshold choices** (ECE is a property of
+the probability map, not the threshold). v2 numbers should be
+treated as the headline; v1 numbers in
+[`evaluation_results.md`](evaluation_results.md) and
+[`evaluation_results_session.md`](evaluation_results_session.md)
+are retained as the methodology-evolution record.
 
 ### Why random splitting is dangerous in practice
 
-For the prototype this is acceptable, but it is a methodologically
-weak choice. Aerial imagery has strong spatial correlation between
-images taken on the same flight: lighting, vegetation, season, sensor
-settings cluster together. A random split puts highly-similar images
-in train and test, so the test score over-estimates real-world
-generalisation.
+For the v1 prototype the random split was acceptable but
+methodologically weak. Aerial imagery has strong spatial correlation
+between images taken on the same flight: lighting, vegetation,
+season, sensor settings cluster together. A random split puts
+highly-similar images in train and test, so the test score
+over-estimates real-world generalisation. The v1 session-grouped
+evaluation tried to surface this, but the v1 trainer's random split
+had already placed ≈90% of every session prefix into the training
+set — so the session "test" bucket was largely composed of seen
+imagery. v2's adoption of the canonical split fixes both problems
+by construction.
 
 **For a production evaluation**, the right protocol is **geographic
 splitting**: train on imagery from one region, test on a held-out

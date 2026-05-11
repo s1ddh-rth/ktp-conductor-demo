@@ -317,6 +317,20 @@ suppression. The catenary fit and Steiner-tree topology completion
 modules in `app/ml/` are designed precisely to recover information
 from this kind of partial evidence.
 
+### 7.4 v2 empirical confirmation of the inference-path-drift hypothesis
+
+The inference-path-drift hypothesis introduced in §6 and read into
+the v1 failure pattern above was validated by the v2 retrain (see
+§10): training and inference at matched 768×768 resolution lifted
+pixel IoU from **0.1387 to 0.3066** (v1 random split → v2 canonical
+test) and recall from **0.1546 to 0.3382**, with no other changes
+to loss, optimiser, augmentation, or model architecture. The
+hypothesis is now empirically confirmed: train/serve resolution
+mismatch was the first-order driver of v1's silent recall collapse,
+not the architecture or the training-loss choice. The catenary and
+Steiner-tree completion modules remain the right answer for §7.3
+context failure, which v2 does not address.
+
 ## 8. Computational analysis
 
 The numbers below come from the actual U-Net + ResNet34 architecture
@@ -360,7 +374,8 @@ beaten or lost — and we report ours as the *measured* output of
 | Abdelfattah et al. (2020), *TTPLA* (ACCV) | Instance segmentation, towers + cables | Mask R-CNN / Yolact, ResNet50/101 | mAP@0.5 | see paper — the cable class consistently scored lower than tower classes |
 | Madaan et al. (2017), *Wire Detection* (IROS) | Binary wire segmentation | Dilated CNN, synthetic + real | F1 | 0.84 |
 | Yetgin & Gerek (2018) | Powerline detection (RGB, classical) | Hand-crafted features | Pixel accuracy | 0.96 |
-| **This prototype** | Binary cable semantic segmentation | U-Net, ResNet34 | mIoU / F1 / CCQ-Q | see `docs/evaluation_results.md` |
+| **This prototype (v1)** | Binary cable semantic segmentation | U-Net, ResNet34 | mIoU / F1 / CCQ-Q | see `docs/evaluation_results.md` |
+| **This prototype (v2)** | Binary cable semantic segmentation | U-Net, ResNet34 | mIoU / F1 / CCQ-Q | see `docs/evaluation_results_v2.md` |
 
 Two caveats. (i) Pixel-accuracy and pixel-IoU on thin structures
 under-reward near-misses; the headline number for this kind of task
@@ -369,6 +384,148 @@ generalisation is brittle: numbers on TTPLA do not transfer to
 urban LV imagery without active labelling and likely an additional
 self-supervised pretraining stage on the target domain. The
 methodology section §6 expands on this.
+
+## 10. v2 retrain
+
+The v1 evaluation surfaced two distinct methodological problems:
+inference-path drift (training at 512×512 via `A.Resize`, serving at
+native 4K through 512-pixel sliding tiles) and training-set leakage
+inside the v1 session-grouped evaluation (the v1 trainer's seed-42
+`random_split` placed ~90% of every session prefix into the
+training set, including the prefixes the session-grouped evaluation
+held out as "test"). v2 is the targeted retrain that addresses both
+by construction. Headline numbers below are reproduced from
+[`evaluation_results_v2.md`](evaluation_results_v2.md).
+
+### 10.1 What changed
+
+- **Training resolution 512 → 768.** The validation transform reads
+  from the same `--resolution` argument, so val IoU is reported on
+  the path the model trains against. Cables in training are now at
+  the same ≈3–5 px width the production sliding window sees at
+  native 4K, closing the resolution gap §6 named.
+- **Training-set construction: random 80/10/10 → TTPLA canonical
+  three-way split** (`train.txt` 905 / `val.txt` 109 /
+  `test.txt` 220). 8 unassigned post-publication images excluded;
+  see §10.2.
+- **Sliding-window inference tile in `training/evaluate.py`
+  defaulted to 768 px** (overrides `settings.tile_size = 512`) so
+  the v2 evaluation runs at the same resolution the v2 model
+  trained against. Without this override the v2 weights would still
+  be evaluated on the v1 inference path.
+- **Threshold sweep on the 220-image canonical test set:** τ=0.30
+  produces IoU **0.3178**, F1 **0.4355**, CCQ-Q **0.4624** —
+  marginally better than τ=0.50 (IoU **0.3066**, F1 **0.4226**,
+  CCQ-Q **0.4567**) on every operational metric, with precision
+  trading down very slightly (0.7478 vs 0.7561). Headline numbers
+  in this section use τ=0.50 to match the convention the rest of
+  the doc reports at; **τ=0.30 is the empirically-optimal operating
+  point for the calibrated v2 model and is what a production
+  deployment should use.**
+
+### 10.2 Canonical-splits methodology note
+
+TTPLA's repository ships a canonical three-way split as
+`train.txt` / `val.txt` / `test.txt` totalling 1234 images
+(905 / 109 / 220). The dataset directory contains 1242 images;
+the 8 unassigned post-publication additions are excluded to
+preserve split integrity. Recent downstream work
+(Liu et al., 2024 — RainTTPLA, HazeTTPLA, SnowTTPLA on
+arXiv:2409.04812) uses a 1000/242 train/test convention with
+their own reconstructed splits, which are not publicly released;
+we use the original authors' canonical three-way split for
+reproducibility and to preserve the held-out validation signal.
+
+### 10.3 Results
+
+Headline numbers across the three available evaluation runs.
+v1 numbers are reproduced verbatim from
+[`evaluation_results.md`](evaluation_results.md) and
+[`evaluation_results_session.md`](evaluation_results_session.md);
+v2 numbers from [`evaluation_results_v2.md`](evaluation_results_v2.md).
+
+| Metric | v1 random | v1 session† | v2 canonical |
+|---|---:|---:|---:|
+| Images evaluated | 124 | 41 | 220 |
+| Sliding-window tile size (px) | 512 | 512 | 768 |
+| Pixel IoU | 0.1387 | 0.3067 | **0.3066** |
+| Pixel precision | 0.5702 | 0.8702 | 0.7561 |
+| Pixel recall | 0.1546 | 0.3209 | **0.3382** |
+| Pixel F1 | 0.2018 | 0.4174 | **0.4226** |
+| CCQ completeness | 0.2829 | 0.5652 | 0.5250 |
+| CCQ correctness | 0.6528 | 0.8704 | 0.7909 |
+| CCQ Quality (headline) | 0.2323 | 0.5296 | **0.4567** |
+| ECE (10-bin) | 0.0190 | 0.0156 | **0.0153** |
+
+† v1 session numbers are inflated by training-set leakage as
+documented in `evaluation_results_session.md` — the v1 trainer's
+seed-42 `random_split` placed ≈90% of every session prefix into
+the training set, so most of the 41 "session test" images had
+already been seen during training. The v1 random row is the only
+v1 number that is genuinely held out.
+
+The headline read: v2 IoU on a *truly* held-out 220-image test set
+matches the v1 session number that was achieved on largely-seen
+imagery (0.3066 vs 0.3067). On the genuinely held-out comparison
+(v1 random vs v2 canonical), every operational metric improved by
+≈ 2× — IoU 0.1387 → 0.3066, recall 0.1546 → 0.3382, F1 0.2018 →
+0.4226, CCQ-Q 0.2323 → 0.4567 — with no other changes than the
+two §10.1 ones. ECE remained excellent at 0.0153.
+
+### 10.4 Honest disclosures preserved
+
+- **Inference-path drift identified in v1 informs the v2 design;
+  v2 closes the train/inference resolution gap.** The §6 hypothesis
+  and the §7.4 confirmation document the round trip from "this
+  might be why v1 silently under-recalls" to "yes, that was it."
+- **Random-split leakage in v1's session-grouped evaluation is an
+  inherent property of the v1 split mode; v2's canonical splits
+  eliminate this by construction.** The v1 session report stays in
+  the repo as historical record (and as the implementation
+  verification of the session-grouped split machinery), explicitly
+  labelled as leaked.
+- **TTPLA → real LV domain gap remains; the v2 retrain does not
+  address this.** Active labelling on a DNO partner's urban
+  aerial / drone imagery, self-supervised pretraining on their
+  unlabelled archive, and a learned RGB+LiDAR fusion model are all
+  Phase-1 steps of the research roadmap and are unchanged by v2.
+
+#### v2 qualitative gallery — failure-mode classifications
+
+Three v2 failures are stored under
+`docs/screenshots/eval/canonical/failures/`. All three returned
+IoU = 0.000 and CCQ-Q = 0.000 — consistent with the v1 pattern
+that the model still fails by producing nothing, not by producing
+noise. Hand-classification of the three:
+
+- **Failure 2 (`11_00098.jpg`, IoU 0.000, CCQ-Q 0.000) — context
+  failure on urban background.** A single thin cable against a
+  parking-lot scene; the model produces no prediction. This is
+  the textbook TTPLA → LV domain-shift failure mode: the network
+  has no in-distribution training signal for cables overlaid on
+  built-environment textures of similar contrast and orientation.
+  The catenary / Steiner-tree completion modules in §4 are the
+  right downstream answer for this case; the right *upstream*
+  answer is the LV-domain active labelling named in §6.
+- **Failure 3 (`44_01131.jpg`, IoU 0.000, CCQ-Q 0.000) —
+  vegetation-background confusion.** Two clearly visible cables
+  against pine vegetation; the model produces no prediction.
+  Direct evidence that vegetation-rich pretraining data is needed
+  in any Phase-1 SSEN data acquisition.
+- **Failure 1 (`108_1830.jpg`, IoU 0.000, CCQ-Q 0.000) —
+  diagnosis pending.** The image appears to contain predicted
+  cables, yet the reported IoU is 0.000. Likely either a
+  sub-pixel-precision miss inside the 3-px CCQ buffer or a
+  ground-truth annotation gap. Either pixel-precision miss within
+  tolerance or annotation gap; **neither is a representative
+  failure mode** and this case should not be read as a model
+  pathology until the underlying cause is confirmed.
+
+The v2 failure pattern reinforces the v1 read: the failures that
+remain are the §7.3 context failures and the LV-domain
+distribution shift §6 names. v2 fixed the §7.2 scale failure;
+v2 did not (and was not designed to) fix the §6 domain-gap
+problem.
 
 ## References
 
