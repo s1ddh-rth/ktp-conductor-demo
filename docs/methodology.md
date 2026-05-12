@@ -105,7 +105,8 @@ A binary mask is one half of the GIS-readiness story. Asset data needs
 which pole). The pipeline:
 
 1. **Threshold + morphological open** to remove sub-cable speckle.
-2. **Skeletonize** (Lee 1994 / scikit-image medial axis).
+2. **Skeletonize** with scikit-image's `skeletonize` (the
+   3-D medial-surface thinning algorithm of Lee, Kashyap & Chu, 1994).
 3. **Walk the skeleton**: count 8-connected neighbours per skeleton
    pixel. Pixels with one neighbour are endpoints; pixels with three
    or more are junctions. Endpoints and junctions become graph nodes;
@@ -123,7 +124,8 @@ methods are demonstrated:
 
 ### 4.1 Catenary fit
 
-Suspended conductors follow a catenary curve under their own weight:
+Suspended conductors follow a catenary curve under their own weight
+(Irvine, 1981):
 
     y(x) = a · cosh((x − x₀) / a) + c
 
@@ -154,14 +156,17 @@ tree spanning all required terminals (transformer + buildings) on a
 candidate edge graph. Edge costs are Euclidean distance, discounted
 where the candidate edge overlaps an observed cable fragment. The
 implementation (`app/ml/graph_complete.py`) uses NetworkX's
-Kou-Markowsky-Berman approximation.
+Kou-Markowsky-Berman approximation (Kou, Markowsky & Berman, 1981).
 
 The Steiner-tree baseline is deterministic and fast. A graph neural
 network conditioned on building footprints, transformer locations,
 and fragment evidence is the natural next step — it would learn
 topology priors that the deterministic method cannot capture (e.g.
 "feeders prefer to follow streets", "branch lengths follow a
-characteristic distribution").
+characteristic distribution"). Khalil, Dai, Zhang, Dilkina & Song
+(2017) is the canonical precedent for training GNNs as policies for
+combinatorial-optimisation problems on graphs, and would underpin
+the Phase-2 learned successor named in `docs/research_roadmap.md`.
 
 ## 5. LiDAR classification
 
@@ -179,8 +184,8 @@ Combined with height-above-ground (estimated as the 5th percentile of z),
 threshold-based rules separate ground, vegetation, conductor, and
 structure. No deep learning is used — the geometric features are
 interpretable and adequate for a clean visual demonstration. PointNet++
-(Qi et al., 2017) or a sparse 3D CNN (MinkowskiNet) is the obvious
-upgrade for production scale.
+(Qi et al., 2017) or a sparse 3D CNN (MinkowskiNet, Choy, Gwak &
+Savarese, 2019) is the obvious upgrade for production scale.
 
 ## 6. Limitations and what would change for the real KTP
 
@@ -192,7 +197,7 @@ directly. The KTP would address this with:
 - **Active labelling** on SSEN's own urban aerial / drone imagery —
   even a few hundred hand-labelled tiles would close most of the gap.
 - **Self-supervised pretraining** on SSEN's unlabelled aerial archive
-  using DINOv2 or MAE.
+  using DINOv2 (Oquab et al., 2023) or MAE (He et al., 2022).
 - **Synthetic urban data** by pasting cable patches onto Mapillary or
   OpenAerialMap backgrounds.
 
@@ -205,14 +210,15 @@ provider.
 ### Modality fusion
 The LiDAR module is independent of the RGB segmenter. The natural
 Phase-2 step is mid-level RGB+LiDAR fusion: dual encoders, cross-
-attention between modalities, shared decoder. Recent fusion work
-(BEVFusion, TransFusion in autonomous driving) provides good
-templates.
+attention between modalities, shared decoder. Recent fusion work in
+autonomous driving — BEVFusion (Liu et al., 2023) and TransFusion
+(Bai et al., 2022) — provides good templates.
 
 ### Hidden-cable inference
 The deterministic Steiner-tree method is a methodology demonstrator,
-not a production tool. A graph neural network — likely a GraphSAGE or
-GAT operating on the building/pole graph with cable-fragment node
+not a production tool. A graph neural network — likely GraphSAGE
+(Hamilton, Ying & Leskovec, 2017) or a GAT (Veličković et al., 2018)
+operating on the building/pole graph with cable-fragment node
 features — is the obvious research direction. Training data would be
 synthesised by masking known segments of digitised LV networks.
 
@@ -376,7 +382,7 @@ beaten or lost — and we report ours as the *measured* output of
 
 | Source | Task | Backbone | Headline metric | Reported value |
 |---|---|---|---|---|
-| Abdelfattah et al. (2020), *TTPLA* (ACCV) | Instance segmentation, towers + cables | Mask R-CNN / Yolact, ResNet50/101 | mAP@0.5 | see paper — the cable class consistently scored lower than tower classes |
+| Abdelfattah et al. (2020), *TTPLA* (ACCV) | Instance segmentation, towers + cables | Mask R-CNN / YOLACT, ResNet50/101 | mAP@0.5 | see paper — the cable class consistently scored lower than tower classes |
 | Madaan et al. (2017), *Wire Detection* (IROS) | Binary wire segmentation | Dilated CNN, synthetic + real | F1 | 0.84 |
 | Yetgin & Gerek (2018) | Powerline detection (RGB, classical) | DCT features | Pixel accuracy | ~0.895 |
 | **This prototype (v1)** | Binary cable semantic segmentation | U-Net, ResNet34 | mIoU / F1 / CCQ-Q | see `docs/evaluation_results.md` |
@@ -567,3 +573,8 @@ to) address the §6 domain-gap problem.
 - Wiedemann, C., Heipke, C., Mayer, H., & Jamet, O. (1998). Empirical Evaluation of Automatically Extracted Road Axes. In Bowyer & Phillips (eds.), *Empirical Evaluation Methods in Computer Vision*, IEEE CS Press, 172–187.
 - Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). On Calibration of Modern Neural Networks. *ICML*.
 - Khalil, E., Dai, H., Zhang, Y., Dilkina, B., & Song, L. (2017). Learning Combinatorial Optimization Algorithms over Graphs. *NeurIPS*.
+- Hamilton, W. L., Ying, R., & Leskovec, J. (2017). Inductive Representation Learning on Large Graphs (GraphSAGE). *NeurIPS*.
+- Veličković, P., Cucurull, G., Casanova, A., Romero, A., Liò, P., & Bengio, Y. (2018). Graph Attention Networks. *ICLR*.
+- Choy, C., Gwak, J., & Savarese, S. (2019). 4D Spatio-Temporal ConvNets: Minkowski Convolutional Neural Networks. *CVPR*.
+- Liu, Z., Tang, H., Amini, A., Yang, X., Mao, H., Rus, D., & Han, S. (2023). BEVFusion: Multi-Task Multi-Sensor Fusion with Unified Bird's-Eye View Representation. *ICRA*.
+- Bai, X., Hu, Z., Zhu, X., Huang, Q., Chen, Y., Fu, H., & Tai, C.-L. (2022). TransFusion: Robust LiDAR-Camera Fusion for 3D Object Detection with Transformers. *CVPR*.
