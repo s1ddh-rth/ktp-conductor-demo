@@ -54,9 +54,11 @@
         digitise their low-voltage networks. Many LV cable runs were never mapped, or exist only on
         paper records — a problem at the heart of supporting EVs, heat pumps, and rooftop solar. The
         prototype is the kind of system a Knowledge Transfer Partnership (KTP) between a university
-        and a DNO would build out, decomposed into the <strong>four components</strong> below — the
-        first three are reachable as the tabs above, the fourth is exposed via an API endpoint
-        called from Tab 1.
+        and a DNO would build out, decomposed into the <strong>four components</strong> below. The
+        first three (segmentation+vectorisation, hidden-cable inference, LiDAR classification) each
+        have their own tab; the fourth (RGB+LiDAR fusion) is reached by ticking
+        <em>Run with RGB + LiDAR fusion</em> on Tab 1, which calls the <code>/api/fuse</code>
+        endpoint. Tab 4 is documentation, not a fifth component.
       </p>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 my-4 text-sm text-slate-700">
         <div class="border border-slate-200 rounded p-3">
@@ -145,7 +147,7 @@
         runs four stages:
         <ol class="mt-2 space-y-1 list-decimal list-inside text-slate-600">
           <li><strong>Segment.</strong> A U-Net with a ResNet-34 encoder, fine-tuned on TTPLA, runs
-            sliding-window inference at 512 × 512 with Hann-windowed stitching for arbitrary input
+            sliding-window inference at 768 × 768 with Hann-windowed stitching for arbitrary input
             sizes. Output: a per-pixel "cable / not-cable" probability map.</li>
           <li><strong>Threshold &amp; clean.</strong> Binarise the probabilities (default τ = 0.5; the
             slider exposes this), then morphological-open to drop sub-cable noise. Output: the red
@@ -172,7 +174,7 @@
         <div class="lg:col-span-1 space-y-4">
           <div class="bg-white rounded-lg border border-slate-200 p-5">
             <h3 class="font-semibold text-slate-900 mb-2">Upload aerial image</h3>
-            <p class="text-sm text-slate-500 mb-3">JPEG/PNG up to 10 MB. Sliding-window inference at 512×512.</p>
+            <p class="text-sm text-slate-500 mb-3">JPEG/PNG up to 10 MB. Sliding-window inference at 768×768.</p>
             <input type="file" id="seg-file" accept="image/*" class="block w-full text-sm text-slate-600 file:mr-3 file:py-2 file:px-3 file:rounded file:border-0 file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200" />
             <button id="seg-run" class="mt-3 w-full bg-[#1f3864] hover:bg-[#152647] text-white font-medium py-2 rounded">Run pipeline</button>
             <label class="mt-3 flex items-center gap-2 text-sm text-slate-700">
@@ -392,7 +394,7 @@
         <p>This prototype was built as a five-day sprint exploring an LV-conductor mapping pipeline. It is intentionally narrow: a working spine through four problem stages — detection, vectorisation, hidden-cable inference, and LiDAR classification — rather than a research contribution.</p>
         <h3 class="text-base font-semibold mt-4">Stack</h3>
         <ul class="text-sm">
-          <li>Segmentation: U-Net (ResNet34 encoder, ImageNet-pretrained) trained with focal + Dice loss on TTPLA at 512×512. PyTorch + segmentation-models-pytorch.</li>
+          <li>Segmentation: U-Net (ResNet34 encoder, ImageNet-pretrained) trained with focal + Dice loss on TTPLA at 768×768. PyTorch + segmentation-models-pytorch.</li>
           <li>Vectorisation: scikit-image skeletonize → custom graph extraction → Shapely Douglas-Peucker simplification → GeoJSON.</li>
           <li>Hidden-cable inference: catenary curve fit (least-squares, SciPy) for two-anchor cases; Steiner-tree approximation (NetworkX) over building footprints for topology completion.</li>
           <li>LiDAR classification: per-point covariance eigenvalues (linearity / planarity / sphericity / verticality, Demantké et al. 2011) + height-above-ground thresholds.</li>

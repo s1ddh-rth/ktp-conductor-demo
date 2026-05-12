@@ -11,6 +11,12 @@ discussion, and an explicit "what would change for production" note.
 
 ## 1. Segmentation model architecture
 
+VRAM and inference figures below were measured during v1 development on
+the GTX 1050 Ti at 512² (the laptop training resolution). The v2
+production model uses the same U-Net + ResNet34 choice but trains at
+768² on a T4 (~14 GB at batch 12); the relative ordering of options is
+unchanged.
+
 | Option | Params (24M base) | VRAM (512², bs 8) | Notes | Reference |
 |---|---|---|---|---|
 | **U-Net (ResNet34) — chosen** | ~24M | ~3.0 GB | Symmetric encoder–decoder, skip connections preserve thin-structure detail | Ronneberger et al. (2015) |

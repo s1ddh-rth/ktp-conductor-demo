@@ -22,11 +22,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from app.config import settings
+from app.limiter import limiter
 from app.ml.model import ConductorSegmenter
 from app.routers import fuse, infer, lidar, segment, vectorise
 
@@ -69,8 +69,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Rate limit: protect the laptop from a viral link
-limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+# Rate limit: protect the laptop from a viral link. The shared
+# limiter lives in app.limiter; the per-route limits are declared
+# on the router functions themselves.
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -116,9 +117,16 @@ async def unhandled_exception(request: Request, exc: Exception):
 @app.get("/health")
 async def health(request: Request):
     seg = request.app.state.segmenter
+    # `model_loaded` reflects whether *fine-tuned* weights are in memory,
+    # not just whether the segmenter object exists — the fallback path in
+    # ConductorSegmenter constructs a no-fine-tuning ImageNet U-Net when
+    # weights are missing, which would otherwise mask the failure.
+    weights_loaded = bool(seg and getattr(seg, "weights_loaded", False))
     return {
         "status": "ok",
-        "model_loaded": seg is not None,
+        "model_loaded": weights_loaded,
+        "weights_path": str(getattr(seg, "weights_path", "")) if seg else None,
+        "tile_size": seg.tile if seg else None,
         "device": seg.device if seg else None,
     }
 

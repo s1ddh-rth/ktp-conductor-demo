@@ -15,8 +15,7 @@ the single piece of the demo that crosses from "ML" into "domain physics".
 
 References
 ----------
-Inman, S. (1962). The geometry of suspended cables.
-Irvine, H. M. (1981). Cable Structures.
+Irvine, H. M. (1981). Cable Structures. MIT Press.
 """
 from __future__ import annotations
 

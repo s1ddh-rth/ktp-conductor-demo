@@ -69,15 +69,16 @@ function formatError(text) {
 }
 
 // Estimate inference time so the user knows whether to wait.
-// Calibrated against CPU benchmarks: a 512x512 tile takes ~5s on
-// CPU and ~0.3s on a T4. The HTML status badge tells us which.
+// Calibrated against the v2 inference path: a 768x768 tile takes
+// ~12s on CPU and ~0.4s on the laptop GTX 1050 Ti. The HTML status
+// badge tells us which.
 function estimateSeconds(width, height) {
   const isCuda = (document.getElementById('status-badge').textContent || '').includes('cuda');
-  const stride = 512 - 64; // tile_size - overlap
+  const stride = 768 - 64; // tile_size - overlap
   const tilesX = Math.ceil(width / stride);
   const tilesY = Math.ceil(height / stride);
   const tiles = tilesX * tilesY;
-  const perTile = isCuda ? 0.3 : 5;
+  const perTile = isCuda ? 0.4 : 12;
   return Math.round(tiles * perTile);
 }
 

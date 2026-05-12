@@ -30,6 +30,10 @@ Group=__USER__
 WorkingDirectory=/home/__USER__/ktp-conductor-demo
 Environment=PATH=/home/__USER__/ktp-conductor-demo/.venv/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
+# Match the v2 model + matched-resolution sliding-window inference path
+# the README headline numbers (IoU 0.307, CCQ-Q 0.457) are produced on.
+Environment=MODEL_WEIGHTS=/home/__USER__/ktp-conductor-demo/weights/unet_resnet34_ttpla_v2.pth
+Environment=TILE_SIZE=768
 ExecStart=/home/__USER__/ktp-conductor-demo/.venv/bin/uvicorn app.main:app \
     --host 0.0.0.0 --port 8000 --workers 1
 Restart=on-failure

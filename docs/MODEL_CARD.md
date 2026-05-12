@@ -5,18 +5,25 @@ This card documents the segmentation model produced by
 `training/train.py` and served by the FastAPI app at `/api/segment`,
 `/api/vectorise`, and `/api/fuse`.
 
-## Model details
+> **v2 is the deployed model.** The defaults in `app/config.py`
+> (`model_weights = weights/unet_resnet34_ttpla_v2.pth`,
+> `tile_size = 768`) and `scripts/ktp-demo.service` both point at
+> v2. The sections immediately below describe v1, which is preserved
+> as historical record. Jump to **§ v2 model card** at the bottom of
+> this file for the production card.
+
+## Model details — v1 (historical; superseded by v2, see § v2 model card below)
 
 | | |
 |---|---|
 | **Architecture** | U-Net (Ronneberger et al., 2015) with ResNet-34 encoder (He et al., 2016), ImageNet-pretrained, single-channel binary output. |
 | **Framework** | PyTorch 2.4 + `segmentation-models-pytorch` 0.3.4. |
 | **Parameters** | 24,436,369 trainable parameters; ~95 MB on disk in fp32. |
-| **Input** | RGB image, ImageNet-normalised, sliding 512 × 512 tiles with 64-pixel overlap and Hann-windowed stitching for arbitrary input sizes. |
+| **Input (v1)** | RGB image, ImageNet-normalised, sliding 512 × 512 tiles with 64-pixel overlap and Hann-windowed stitching. v2 production: 768 × 768 tiles (see § v2 model card). |
 | **Output** | Per-pixel probability of the "conductor" class in [0, 1]; thresholded at 0.5 by default. |
 | **Loss** | 0.5 × FocalLoss (Lin et al., 2017) + 0.5 × DiceLoss. |
 | **Optimiser** | AdamW, lr = 1e-3, weight decay = 1e-4, cosine annealing. |
-| **Training schedule** | Up to 50 epochs, batch size 16, image crops 512 × 512, mixed precision. |
+| **Training schedule (v1)** | Up to 50 epochs, batch size 16, image crops 512 × 512, mixed precision. v2: batch size 12, 768 × 768. |
 | **Producer** | This repository's `training/train.py`. |
 | **Licence** | Same as the repository (MIT). Trained on Apache-2.0 TTPLA data. |
 
@@ -120,8 +127,9 @@ Documented in `docs/methodology.md` §7. Summarised here:
 
 - **Training**: ~25–50 minutes on a single Colab T4 GPU at fp16-mixed
   precision; rough peak power 70 W → 0.04–0.06 kWh per training run.
-- **Inference**: ~150–300 ms per 512 × 512 tile on a GTX 1050 Ti;
-  CPU inference (the demo deployment fallback) is ~5 seconds per tile.
+- **Inference (v1)**: ~150–300 ms per 512 × 512 tile on a GTX 1050 Ti;
+  CPU inference is ~5 seconds per tile. v2 production figures are in
+  the § v2 carbon-and-compute section below.
 
 ## Citation
 

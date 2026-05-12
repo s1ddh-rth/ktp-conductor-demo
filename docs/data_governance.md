@@ -38,8 +38,12 @@ The relevant patterns embedded in the code:
 - **Structured logging without PII.** Logs record request ID, path,
   status, timing — never headers, body content, IP addresses, or
   uploaded image bytes.
-- **Rate limiting.** Default 60 req/min per IP via `slowapi`. Prevents
-  the demo URL being used to mass-process third-party imagery.
+- **Rate limiting.** Per-endpoint `slowapi` limits keyed by client IP:
+  10 req/min on the GPU-heavy routes (`/api/segment`, `/api/vectorise`,
+  `/api/fuse`), 20 req/min on `/api/lidar/sample`, 30 req/min on the
+  `/api/infer-hidden/*` deterministic routes. Prevents the demo URL
+  being used to mass-process third-party imagery and protects the
+  laptop GPU from a viral link.
 - **CORS allow-list.** Configurable; defaults to `*` for the demo but
   documented as the first thing to tighten in a production deployment.
 - **No authenticated endpoints with persistent state.** All API

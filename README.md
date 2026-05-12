@@ -115,7 +115,7 @@ uv sync
 
 # Place trained weights (see training/COLAB.md)
 mkdir -p weights
-cp /path/to/unet_resnet34_ttpla.pth weights/
+cp /path/to/unet_resnet34_ttpla_v2.pth weights/
 
 # Add a sample LAS for the LiDAR demo
 cp /path/to/sample.laz app/static/examples/thatcham_sample.laz
@@ -233,12 +233,12 @@ so the frontend's "Examples" panel surfaces them automatically.
 ### Tests and evaluation
 
 ```bash
-uv run python -m pytest             # 39 tests on ml/, geo/, routers
+uv run python -m pytest             # 45 tests on ml/, geo/, routers
 uv run python -m training.evaluate \
     --data /path/to/ttpla \
-    --weights weights/unet_resnet34_ttpla.pth \
-    --split val
-# → docs/evaluation_results.md  + qualitative panels under docs/screenshots/eval/
+    --weights weights/unet_resnet34_ttpla_v2.pth \
+    --split-strategy canonical --split test
+# → docs/evaluation_results_v2.md + qualitative panels under docs/screenshots/eval/
 ```
 
 ## Stack

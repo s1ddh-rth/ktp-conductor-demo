@@ -100,10 +100,10 @@ budget, (b) building-coverage rate, (c) alignment with observed
 fragments, and (d) penalties for crossing protected features
 (railways, motorways) sourced from OS Open Zoomstack. This is
 related to the wider literature on RL-for-combinatorial-optimisation
-(Dai et al., 2017, *Learning Combinatorial Optimization Algorithms
-over Graphs*; Khalil et al., 2017, *Learning to Optimize via
-Posterior Sampling*) where graph neural networks are trained as
-state representations for an actor-critic agent.
+(Khalil, Dai, Zhang, Dilkina, Song, 2017, *Learning Combinatorial
+Optimization Algorithms over Graphs*, NeurIPS) where graph neural
+networks are trained as state representations for an actor-critic
+agent.
 
 A KTP-scale execution would start with offline RL on synthesised
 LV layouts (using the augmented urban scenes from Phase 1), evaluate

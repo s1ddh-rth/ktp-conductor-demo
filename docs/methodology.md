@@ -62,12 +62,15 @@ The prototype is a working spine through all four.
 
 ### Architecture
 
-A U-Net (Ronneberger et al., 2015) with a ResNet34 (He et al., 2015)
+A U-Net (Ronneberger et al., 2015) with a ResNet34 (He et al., 2016)
 encoder, ImageNet-pretrained. ResNet34 sits at a defensible point on
 the depth/memory trade-off — deep enough to learn cable texture,
-shallow enough to fine-tune at 512×512 with batch size 8 on a
-4 GB-VRAM GPU. The decoder is the standard U-Net symmetric upsampler
-with skip connections from the encoder.
+shallow enough to fine-tune at 768 × 768 with batch size 12 on a
+16 GB T4 (v2 production), or at 512 × 512 with batch size 8 on the
+4 GB 1050 Ti (v1 historical; the resolution drop was the binding
+constraint of training on the laptop directly). The decoder is the
+standard U-Net symmetric upsampler with skip connections from the
+encoder.
 
 ### Training
 
@@ -88,10 +91,12 @@ with skip connections from the encoder.
 
 ### Inference
 
-Sliding-window tiling at 512 × 512 with a 64-pixel overlap, reflective
-padding to a multiple of the tile, and Hann-windowed averaging during
-stitching to suppress tile-edge artefacts. This lets the model run on
-arbitrary input sizes without retraining.
+Sliding-window tiling at 768 × 768 with a 64-pixel overlap (the v2
+production configuration, matched to the training resolution to close
+the inference-path drift documented in §10), reflective padding to a
+multiple of the tile, and Hann-windowed averaging during stitching to
+suppress tile-edge artefacts. This lets the model run on arbitrary
+input sizes without retraining.
 
 ## 3. Vectorisation
 
@@ -340,11 +345,11 @@ or computed where indicated.
 | Quantity | Value | Source |
 |---|---|---|
 | Parameters | **24.44 M** (24,436,369 exactly) | `sum(p.numel() for p in m.parameters())` on the loaded model |
-| Conv2d FLOPs at 512 × 512 | **62.5 GFLOPs / forward pass** | hooked-pass count over Conv2d layers, single tile |
-| Per-tile latency, GTX 1050 Ti, fp32 | ~150–300 ms | typical for this architecture at this scale; replace with the measured value after a benchmark pass on the deployment hardware |
-| Peak training VRAM, T4 / 16 GB, batch 16 | ~12 GB | Lightning `precision="16-mixed"` |
-| Peak training VRAM, 1050 Ti / 4 GB, batch 4 | ~3.4 GB | matches the design choice noted in `docs/design_decisions.md` |
-| Sliding-window cost, 1024 × 1024 input, stride 448 | 9 tiles → ~1.5–2.7 s end-to-end | tile count = `ceil((H + pad)/stride) · ceil((W + pad)/stride)` |
+| Conv2d FLOPs at 768 × 768 (v2) | **~141 GFLOPs / forward pass** | quadratic in tile side; v1 measured 62.5 GFLOPs at 512 × 512 |
+| Per-tile latency, GTX 1050 Ti, fp32, 768 px (v2) | ~300–500 ms | v1 at 512 px was ~150–300 ms; the increase tracks the ~2.25× FLOP ratio |
+| Peak training VRAM, T4 / 16 GB, batch 12, 768 × 768 (v2) | ~14 GB | Lightning `precision="16-mixed"`; v1 ran batch 16 at 512 px ≈ ~12 GB |
+| Peak training VRAM, 1050 Ti / 4 GB, batch 4, 512 × 512 (v1 fallback) | ~3.4 GB | matches the design choice noted in `docs/design_decisions.md` |
+| Sliding-window cost, 1024 × 1024 input, stride 704 (v2) | 4 tiles → ~1.2–2.0 s end-to-end | tile count = `ceil((H + pad)/stride) · ceil((W + pad)/stride)`; v1 stride 448 produced 9 tiles |
 | Disk weight size | ~95 MB (fp32) | dominated by the ResNet34 encoder weights at full precision |
 
 The prototype runs comfortably within the laptop's 4 GB VRAM ceiling
@@ -373,7 +378,7 @@ beaten or lost — and we report ours as the *measured* output of
 |---|---|---|---|---|
 | Abdelfattah et al. (2020), *TTPLA* (ACCV) | Instance segmentation, towers + cables | Mask R-CNN / Yolact, ResNet50/101 | mAP@0.5 | see paper — the cable class consistently scored lower than tower classes |
 | Madaan et al. (2017), *Wire Detection* (IROS) | Binary wire segmentation | Dilated CNN, synthetic + real | F1 | 0.84 |
-| Yetgin & Gerek (2018) | Powerline detection (RGB, classical) | Hand-crafted features | Pixel accuracy | 0.96 |
+| Yetgin & Gerek (2018) | Powerline detection (RGB, classical) | DCT features | Pixel accuracy | ~0.895 |
 | **This prototype (v1)** | Binary cable semantic segmentation | U-Net, ResNet34 | mIoU / F1 / CCQ-Q | see `docs/evaluation_results.md` |
 | **This prototype (v2)** | Binary cable semantic segmentation | U-Net, ResNet34 | mIoU / F1 / CCQ-Q | see `docs/evaluation_results_v2.md` |
 
@@ -430,7 +435,7 @@ TTPLA's repository ships a canonical three-way split as
 (905 / 109 / 220). The dataset directory contains 1242 images;
 the 8 unassigned post-publication additions are excluded to
 preserve split integrity. Recent downstream work
-(Liu et al., 2024 — RainTTPLA, HazeTTPLA, SnowTTPLA on
+(Yang et al., 2024 — RainTTPLA, HazeTTPLA, SnowTTPLA on
 arXiv:2409.04812) uses a 1000/242 train/test convention with
 their own reconstructed splits, which are not publicly released;
 we use the original authors' canonical three-way split for
@@ -554,4 +559,11 @@ to) address the §6 domain-gap problem.
 - Irvine, H. M. (1981). *Cable Structures*. MIT Press.
 - Lee, T. C., Kashyap, R. L., & Chu, C. N. (1994). Building skeleton models via 3-D medial surface axis thinning algorithms. *CVGIP*.
 - Qi, C. R., Yi, L., Su, H., & Guibas, L. J. (2017). PointNet++: Deep Hierarchical Feature Learning on Point Sets in a Metric Space. *NeurIPS*.
-- Kou, L., Markowsky, G., & Berman, L. (1981). A fast algorithm for Steiner trees. *Acta Informatica*.
+- Kou, L., Markowsky, G., & Berman, L. (1981). A fast algorithm for Steiner trees. *Acta Informatica*, 15(2), 141–145.
+- He, K., Chen, X., Xie, S., Li, Y., Dollár, P., & Girshick, R. (2022). Masked Autoencoders Are Scalable Vision Learners. *CVPR*.
+- Oquab, M., Darcet, T., Moutakanni, T., et al. (2023). DINOv2: Learning Robust Visual Features without Supervision. *TMLR* (arXiv:2304.07193).
+- Yang, S., Hu, B., Zhou, B., et al. (2024). Power Line Aerial Image Restoration under Adverse Weather: Datasets and Baselines. arXiv:2409.04812.
+- Yetgin, Ö. E., & Gerek, Ö. N. (2018). Automatic recognition of scenes with power line wires in real life aerial images using DCT-based features. *Digital Signal Processing*, 77, 102–119.
+- Wiedemann, C., Heipke, C., Mayer, H., & Jamet, O. (1998). Empirical Evaluation of Automatically Extracted Road Axes. In Bowyer & Phillips (eds.), *Empirical Evaluation Methods in Computer Vision*, IEEE CS Press, 172–187.
+- Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). On Calibration of Modern Neural Networks. *ICML*.
+- Khalil, E., Dai, H., Zhang, Y., Dilkina, B., & Song, L. (2017). Learning Combinatorial Optimization Algorithms over Graphs. *NeurIPS*.

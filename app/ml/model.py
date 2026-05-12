@@ -7,8 +7,10 @@ segmentation in aerial imagery.
 
 The encoder choice trades off depth against the 4 GB VRAM ceiling on the
 training laptop (GTX 1050 Ti). ResNet34 sits at the sweet spot: deep enough
-to learn powerline texture, shallow enough to fine-tune at 512×512 with
-batch size 8.
+to learn powerline texture, shallow enough to fine-tune at 768×768 with
+batch size 12 (v2) — the production resolution that matches sliding-window
+inference. v1 used 512×512 with batch size 16; the resolution change is
+the methodology fix documented in `docs/methodology.md` §10.
 """
 from __future__ import annotations
 
@@ -36,12 +38,14 @@ class ConductorSegmenter:
             in_channels=3,
             classes=1,
         )
+        self.weights_path = weights_path
         if weights_path.exists():
             state = torch.load(weights_path, map_location=self.device, weights_only=True)
             # Lightning checkpoints store under 'state_dict'; raw torch.save does not
             if "state_dict" in state:
                 state = {k.replace("model.", ""): v for k, v in state["state_dict"].items()}
             self.model.load_state_dict(state, strict=False)
+            self.weights_loaded = True
             log.info("model.weights_loaded", path=str(weights_path))
         else:
             log.warning(
@@ -55,6 +59,7 @@ class ConductorSegmenter:
                 in_channels=3,
                 classes=1,
             )
+            self.weights_loaded = False
         self.model.to(self.device).eval()
         self.tile = settings.tile_size
         self.overlap = settings.tile_overlap

@@ -15,6 +15,7 @@ from PIL import Image
 
 from app.config import settings
 from app.geo.vectorise import linestrings_to_geojson
+from app.limiter import limiter
 from app.ml.postprocess import (
     graph_to_linestrings,
     mask_to_skeleton,
@@ -28,6 +29,7 @@ MAX_BYTES = settings.max_upload_mb * 1024 * 1024
 
 
 @router.post("/vectorise")
+@limiter.limit("10/minute")
 async def vectorise(
     request: Request,
     file: UploadFile = File(...),

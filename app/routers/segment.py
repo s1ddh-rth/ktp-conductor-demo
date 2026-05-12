@@ -10,6 +10,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from PIL import Image
 
 from app.config import settings
+from app.limiter import limiter
 
 router = APIRouter()
 log = structlog.get_logger()
@@ -18,6 +19,7 @@ MAX_BYTES = settings.max_upload_mb * 1024 * 1024
 
 
 @router.post("/segment")
+@limiter.limit("10/minute")
 async def segment(request: Request, file: UploadFile = File(...)):
     raw = await file.read()
     if len(raw) > MAX_BYTES:

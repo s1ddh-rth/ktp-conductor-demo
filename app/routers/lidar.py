@@ -11,17 +11,20 @@ from pathlib import Path
 import laspy
 import numpy as np
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.config import settings
 from app.geo.lidar_features import classify
+from app.limiter import limiter
 
 router = APIRouter()
 log = structlog.get_logger()
 
 
 @router.get("/lidar/sample")
+@limiter.limit("20/minute")
 async def lidar_sample(
+    request: Request,
     name: str = Query("thatcham_sample", description="sample LAS basename"),
     max_points: int = Query(150_000, ge=10_000, le=500_000),
 ):
@@ -37,7 +40,8 @@ async def lidar_sample(
 
     pts = np.column_stack([las.x, las.y, las.z]).astype(np.float32)
     if len(pts) > max_points:
-        idx = np.random.choice(len(pts), size=max_points, replace=False)
+        # Seeded so Tab 3's view and /api/fuse's LiDAR subsampling agree.
+        idx = np.random.default_rng(0).choice(len(pts), size=max_points, replace=False)
         pts = pts[idx]
 
     # Re-centre for browser numerical stability

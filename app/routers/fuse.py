@@ -27,6 +27,7 @@ from PIL import Image
 from app.config import settings
 from app.geo.lidar_features import classify
 from app.geo.vectorise import linestrings_to_geojson
+from app.limiter import limiter
 from app.ml.fusion import fuse
 from app.ml.postprocess import graph_to_linestrings, mask_to_skeleton, skeleton_to_graph
 
@@ -88,6 +89,7 @@ def _project_lidar_to_image(
 
 
 @router.post("/fuse")
+@limiter.limit("10/minute")
 async def fuse_rgb_lidar(
     request: Request,
     file: UploadFile = File(...),

@@ -11,10 +11,11 @@ frontend ships pre-defined scenarios that demonstrate the methods.
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from shapely.geometry import LineString
 
+from app.limiter import limiter
 from app.ml.catenary import confidence_band, fit_catenary_2d
 from app.ml.graph_complete import confidence_per_edge, predict_lv_topology
 
@@ -36,7 +37,8 @@ class TopologyRequest(BaseModel):
 
 
 @router.post("/infer-hidden/catenary")
-async def infer_catenary(req: CatenaryRequest):
+@limiter.limit("30/minute")
+async def infer_catenary(request: Request, req: CatenaryRequest):
     if req.p1 == req.p2:
         raise HTTPException(400, "p1 and p2 must differ")
     curve = fit_catenary_2d(req.p1, req.p2, sag_fraction=req.sag_fraction)
@@ -48,7 +50,8 @@ async def infer_catenary(req: CatenaryRequest):
 
 
 @router.post("/infer-hidden/topology")
-async def infer_topology(req: TopologyRequest):
+@limiter.limit("30/minute")
+async def infer_topology(request: Request, req: TopologyRequest):
     fragments = [LineString(f) for f in req.observed_fragments if len(f) >= 2]
     edges = predict_lv_topology(
         transformer=req.transformer,

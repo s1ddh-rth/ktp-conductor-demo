@@ -12,9 +12,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Model
-    model_weights: Path = ROOT / "weights" / "unet_resnet34_ttpla.pth"
+    model_weights: Path = ROOT / "weights" / "unet_resnet34_ttpla_v2.pth"
     device: str = "cuda"  # falls back to cpu in ConductorSegmenter if unavailable
-    tile_size: int = 512
+    tile_size: int = 768
     tile_overlap: int = 64
     confidence_threshold: float = 0.5
 

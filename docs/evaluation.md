@@ -162,7 +162,7 @@ direct comparison is partial:
 | TTPLA paper (2020) | Instance segmentation, cables only | mAP@0.5 | (see paper) |
 | TTPLA paper (2020) | Semantic segmentation, cables only | mIoU | (see paper) |
 | Madaan et al. (2017) | Wire segmentation, synthetic + real | F1 | 0.84 |
-| Yetgin & Gerek (2018) | Powerline detection (RGB) | Pixel accuracy | 0.96 |
+| Yetgin & Gerek (2018) | Powerline detection (RGB, DCT features) | Pixel accuracy | ~0.895 |
 | Ours | Semantic segmentation, cables only | mIoU, F1, CCQ-Q | (measured) |
 
 Numbers from prior work are recorded with citations; values without a
@@ -202,3 +202,12 @@ ground-truth data, which is itself an outcome of the larger project.
   Beyond the Pixel-Wise Loss for Topology-Aware Delineation. *CVPR*.
 - Shit, S., Paetzold, J. C., et al. (2021). clDice — A Novel Topology-
   Preserving Loss Function for Tubular Structure Segmentation. *CVPR*.
+- Madaan, R., Maturana, D., & Scherer, S. (2017). Wire Detection using
+  Synthetic Data and Dilated Convolutional Networks for Unmanned Aerial
+  Vehicles. *IROS*.
+- Yetgin, Ö. E., & Gerek, Ö. N. (2018). Automatic recognition of scenes
+  with power line wires in real life aerial images using DCT-based
+  features. *Digital Signal Processing*, 77, 102–119.
+- Abdelfattah, R., Wang, X., & Wang, S. (2020). TTPLA: An Aerial-Image
+  Dataset for Detection and Segmentation of Transmission Towers and
+  Power Lines. *ACCV*.

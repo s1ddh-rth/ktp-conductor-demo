@@ -123,8 +123,9 @@ masks.
 mysteriously low.
 
 **Mitigations**:
-- Inference budget is generous: ~150–300ms per 512x512 tile, so even
-  a 4K image is a few-second wait. Thermal limits unlikely to bite.
+- Inference budget is comfortable at the v2 default of 768×768
+  (~300–500 ms per tile on the 1050 Ti), so even a 4K image is a
+  few-second wait. Thermal limits unlikely to bite.
 - Set `nvidia-smi -pl <power-limit>` if needed to cap power draw.
 - Demo laptop placed on a flat surface with airflow underneath.
 
