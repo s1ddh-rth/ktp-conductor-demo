@@ -10,7 +10,11 @@ credentials-file: /home/REPLACE-WITH-USER/.cloudflared/REPLACE-WITH-TUNNEL-UUID.
 
 ingress:
   - hostname: ktp.REPLACE-WITH-YOURDOMAIN.dev
-    service: http://localhost:8000
+    # Host port 8002 — matches the docker-compose port mapping
+    # (8002:8000). uvicorn inside the container still listens on
+    # 8000; only the host-side bind moved to avoid clashing with
+    # other locally-running 8000 services.
+    service: http://localhost:8002
     originRequest:
       connectTimeout: 30s
       tlsTimeout: 10s

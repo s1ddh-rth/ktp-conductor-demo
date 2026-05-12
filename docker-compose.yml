@@ -25,7 +25,11 @@ services:
     container_name: ktp-demo
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Host port 8002 matches the operator's Cloudflare tunnel
+      # config (scripts/cloudflared-config.example.yml: service:
+      # http://localhost:8002). Container port stays at 8000 — that
+      # is what uvicorn binds inside the container.
+      - "8002:8000"
     volumes:
       # `:Z` is harmless on Docker (label is ignored) and required on
       # Fedora / RHEL hosts running rootless Podman with SELinux
