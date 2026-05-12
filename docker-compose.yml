@@ -27,8 +27,12 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./weights:/app/weights:ro
-      - ./app/static/examples:/app/app/static/examples:ro
+      # `:Z` is harmless on Docker (label is ignored) and required on
+      # Fedora / RHEL hosts running rootless Podman with SELinux
+      # enforcing — without it, the container gets EACCES on the
+      # bind-mounted directories.
+      - ./weights:/app/weights:ro,Z
+      - ./app/static/examples:/app/app/static/examples:ro,Z
     environment:
       - DEVICE=cuda          # falls back to cpu if CUDA is unavailable
     deploy:

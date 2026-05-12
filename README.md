@@ -138,6 +138,62 @@ runtime base; on a host with `nvidia-container-toolkit` they pick up
 the GPU automatically. CPU-only hosts work too — `ConductorSegmenter`
 falls back when CUDA is unavailable.
 
+### Run via Podman on Fedora
+
+The Dockerfile is plain syntax (no `# syntax=` BuildKit directive),
+so Podman / Buildah parse it natively. The compose file's bind mounts
+carry `:Z` so SELinux on Fedora doesn't block them. One known caveat:
+podman-compose does not reliably honour the Compose v3 GPU
+reservation block — the portable Podman GPU path is the
+Container Device Interface (CDI), wired up once on the host:
+
+```bash
+# One-off host setup (Fedora 40+):
+sudo dnf install -y nvidia-container-toolkit
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+nvidia-ctk cdi list  # should show nvidia.com/gpu=all and per-GPU entries
+```
+
+Build the image, then run with the GPU passed in via CDI:
+
+```bash
+podman build -t ktp-conductor-demo:latest .
+
+podman run --rm -d \
+    --name ktp-demo \
+    --device nvidia.com/gpu=all \
+    -p 8000:8000 \
+    -e MODEL_WEIGHTS=weights/unet_resnet34_ttpla_v2.pth \
+    -e TILE_SIZE=768 \
+    -v "$PWD/weights:/app/weights:ro,Z" \
+    -v "$PWD/app/static/examples:/app/app/static/examples:ro,Z" \
+    ktp-conductor-demo:latest
+```
+
+`MODEL_WEIGHTS` and `TILE_SIZE=768` point the server at the v2
+checkpoint and match the production sliding-window tile to the v2
+training resolution. Omit `--device nvidia.com/gpu=all` and the
+container runs on CPU silently — `torch.cuda.is_available()` simply
+returns `False` and `ConductorSegmenter` falls back. On a GTX 1050 Ti
+(4 GB), v2 inference at 768 × 768 takes ~300–500 ms per tile; the
+CPU fallback is ~12 s per tile.
+
+Confirm the GPU is visible inside the container:
+
+```bash
+podman exec ktp-demo python -c \
+    "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+# → True NVIDIA GeForce GTX 1050 Ti
+```
+
+For a long-lived service, prefer a Podman **Quadlet** unit
+(`/etc/containers/systemd/ktp-demo.container`) over the compose
+`restart: unless-stopped` block — the Quadlet is what `systemd`
+manages directly and is the idiomatic Fedora pattern. The
+`scripts/ktp-demo.service` file in this repo is the bare-uvicorn
+form; a Quadlet wrapping the container above is the equivalent for
+the containerised deployment.
+
 ### Run as a systemd service
 
 A unit template is at `scripts/ktp-demo.service`. Replace `__USER__`
