@@ -15,9 +15,12 @@ dependencies = [
     "slowapi>=0.1.9",
     "prometheus-fastapi-instrumentator>=7.0",
     "structlog>=24.4",
-    # ML / CV
-    "torch>=2.4",
-    "torchvision>=0.19",
+    # ML / CV — PyTorch capped before 2.9: starting torch 2.8 PyPI wheels
+    # dropped Pascal (sm_61) support, which the demo laptop's GTX 1050 Ti
+    # needs. The cu126 index below is the last PyTorch CUDA build that
+    # still ships sm_61 kernels. See pytorch/pytorch#157517, #160575.
+    "torch>=2.4,<2.9",
+    "torchvision>=0.19,<0.24",
     "segmentation-models-pytorch>=0.3.4",
     "albumentations>=1.4",
     "opencv-python-headless>=4.10",
@@ -64,6 +67,20 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+# Pin PyTorch to the cu126 wheel index. PyPI's default torch wheels
+# transitioned to CUDA 13 starting 2.11 (dev-discuss "Transitioning
+# PyPI CUDA wheels to CUDA 13.0"), which drops Pascal support. The
+# cu126 build is the last PyTorch CUDA version still shipping sm_61
+# kernels for the GTX 1050 Ti.
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
 
 [tool.ruff]
 line-length = 100
